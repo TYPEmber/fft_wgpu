@@ -1,5 +1,5 @@
 [package]
-name = "wgpu_fft"
+name = "fft_wgpu"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,4 +8,9 @@ wgpu = "*"
 bytemuck = { version = "*", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
-num = "*"
+num-complex = { version = "*", features = ["bytemuck"] }
+rustfft = "*"
+
+[[example]]
+name = "basic"
+path = "src/examples/basic.rs"

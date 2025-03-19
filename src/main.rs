@@ -1,4 +1,4 @@
-use wgpu_fft::*;
+use fft_wgpu::*;
 
 #[tokio::main]
 async fn main() {

@@ -2,25 +2,35 @@
 var<storage, read_write> buffer_a: array<vec2<f32>>;
 @group(0) @binding(1)
 var<storage, read_write> buffer_b: array<vec2<f32>>;
+@group(0) @binding(2)
+var<storage, read_write> stage: u32;
+@group(0) @binding(3)
+var<storage, read_write> fft_len: u32;
 
 const PI: f32 = 3.14159265358979323846;
 const workgroup_len: u32 = 32u;
 
-struct PushConstants { fft_len: u32, stage: u32 }
-var<push_constant> consts: PushConstants;
-
 @compute @workgroup_size(workgroup_len)
 fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups) num_workgroups: vec3<u32>, @builtin(local_invocation_index) local_invocation_index: u32) {
-    let fft_len = consts.fft_len;
     let index = (workgroup_id.x + workgroup_id.y * num_workgroups.x + workgroup_id.z * num_workgroups.x * num_workgroups.y) * workgroup_len + local_invocation_index;
     let offset = index / (fft_len / 2u) * fft_len;
-   
-   fft(index % (fft_len / 2u), fft_len, offset, consts.stage);
+    fft(index % (fft_len / 2u), fft_len, offset);
+
+    //  buffer_a[stage] = vec2<f32>(f32(p), f32(stage));
+
+    // if index == arrayLength(&buffer_a) / 2u - 1u {
+    //     stage += 1u;
+    // }
+
+    // if stage == 4 {
+    //     stage = 0u;
+    // }
 }
 
-fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
+fn fft(idx: u32, n: u32, offset: u32) {
     let J = 1u << stage;
     // 每个工作项处理一个蝶形运算
+    // let idx = global_id.x;
     let block_size = 2u * J;
     let total_blocks = n / block_size;
 

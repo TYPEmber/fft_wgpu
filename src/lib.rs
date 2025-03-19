@@ -3,6 +3,10 @@ use std::borrow::Cow;
 use bytemuck::{Pod, Zeroable};
 use wgpu::*;
 
+pub mod processor;
+pub use processor::*;
+pub mod wgpu_helper;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Complex {
@@ -61,7 +65,7 @@ fn prepare_cs_model(device: &Device) -> ComputePipeline {
     // Loads the shader from WGSL
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
-        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("kernel/fft.wgsl"))),
+        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("kernel/fft_stage.wgsl"))),
     });
     // Instantiates the pipeline.
     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
