@@ -14,27 +14,28 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups)
     let fft_len = consts.fft_len;
     let index = (workgroup_id.x + workgroup_id.y * num_workgroups.x + workgroup_id.z * num_workgroups.y * num_workgroups.x) * workgroup_len + local_invocation_index;
     let offset = index / (fft_len / 2u) * fft_len;
-   
-   fft(index % (fft_len / 2u), fft_len, offset, consts.stage);
+    let round_num = u32(log2(f32(fft_len)));
+   ifft(index % (fft_len / 2u), fft_len, offset, consts.stage,round_num);
+
 }
 
-fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
+fn ifft(idx: u32, n: u32, offset: u32, stage: u32,round_num:u32) {
     let J = 1u << stage;
     // 每个工作项处理一个蝶形运算
     let block_size = 2u * J;
     let total_blocks = n / block_size;
 
-    if idx >= total_blocks * J {
+    //if idx >= total_blocks * J {
         // buffer_a[idx] = vec2<f32>(f32(offset), f32(stage));
         // buffer_b[idx] = vec2<f32>(f32(offset), f32(block_size));
-        return;
-    }
+        //return;
+   // }
 
     let block_idx = idx / J;
     let j = idx % J;
 
     let s = block_idx;
-    let theta = - 2.0 * PI * f32(s * J) / f32(n);
+    let theta =  2.0 * PI * f32(s * J) / f32(n);
     let twiddle = vec2<f32>(cos(theta), sin(theta));
 
     // 输入位置
@@ -57,6 +58,12 @@ fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
         let b = buffer_b[idx2];
         buffer_a[out_idx1] = a + b;
         buffer_a[out_idx2] = complex_mul(a - b, twiddle);
+    }
+    if stage==round_num-1{
+        buffer_a[out_idx1] = buffer_a[out_idx1]/f32(n);
+        buffer_a[out_idx2] = buffer_a[out_idx2]/f32(n);
+        buffer_b[out_idx1] = buffer_b[out_idx1]/f32(n);
+        buffer_b[out_idx2] = buffer_b[out_idx2]/f32(n);
     }
 }
 

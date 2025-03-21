@@ -14,3 +14,8 @@ rustfft = "*"
 [[example]]
 name = "basic"
 path = "src/examples/basic.rs"
+
+[[example]]
+name = "basic_inverse"
+path = "src/examples/basic_inverse.rs"
+
