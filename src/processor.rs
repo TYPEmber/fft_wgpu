@@ -9,7 +9,7 @@ pub struct Forward<'a> {
     buffer_a: &'a wgpu::Buffer,
     buffer_b: wgpu::Buffer,
     //pub round_num: wgpu::Buffer,
-   // pub fft_len_buf: wgpu::Buffer,
+    // pub fft_len_buf: wgpu::Buffer,
     pub fft_len: u32,
 }
 
@@ -36,17 +36,17 @@ impl<'a> Forward<'a> {
         });
 
         // let round_num = device.create_buffer(&wgpu::BufferDescriptor {
-            // label: None,
-            // size: (std::mem::size_of::<u32>()) as u64,
-            // usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-            // mapped_at_creation: false,
+        // label: None,
+        // size: (std::mem::size_of::<u32>()) as u64,
+        // usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+        // mapped_at_creation: false,
         // });
 
         // let fft_len_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            // label: None,
-            // size: (std::mem::size_of::<u32>()) as u64,
-            // usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-            // mapped_at_creation: false,
+        // label: None,
+        // size: (std::mem::size_of::<u32>()) as u64,
+        // usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+        // mapped_at_creation: false,
         // });
 
         // Instantiates the bind group, once again specifying the binding of buffers.
@@ -74,7 +74,7 @@ impl<'a> Forward<'a> {
             buffer_a,
             buffer_b,
             //round_num,
-           // fft_len_buf,
+            // fft_len_buf,
         }
     }
 
@@ -154,7 +154,7 @@ fn prepare_cs_model(device: &wgpu::Device) -> wgpu::ComputePipeline {
                     min_binding_size: None,
                 },
                 count: None,
-            }
+            },
         ],
     });
 
@@ -181,8 +181,6 @@ fn prepare_cs_model(device: &wgpu::Device) -> wgpu::ComputePipeline {
     })
 }
 
-
-
 pub struct Inverse<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
@@ -190,7 +188,7 @@ pub struct Inverse<'a> {
     bind_group: wgpu::BindGroup,
     buffer_a: &'a wgpu::Buffer,
     buffer_b: wgpu::Buffer,
-   // pub round_num: wgpu::Buffer,
+    // pub round_num: wgpu::Buffer,
     //pub fft_len_buf: wgpu::Buffer,
     pub fft_len: u32,
 }
@@ -216,8 +214,6 @@ impl<'a> Inverse<'a> {
                 | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-
-
 
         // Instantiates the bind group, once again specifying the binding of buffers.
         let bind_group_forward = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -277,11 +273,16 @@ impl<'a> Inverse<'a> {
         // dbg!(self);
 
         cpass.set_push_constants(0, &self.fft_len.to_le_bytes());
+        let round_num = self.fft_len.trailing_zeros();
+        cpass.set_push_constants(8, &round_num.to_le_bytes());
 
         for i in 0..(self.fft_len as f32).log2().round() as u32 {
             cpass.set_push_constants(4, &i.to_le_bytes());
             cpass.dispatch_workgroups(x, y, z);
         }
+
+       
+       
 
         if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
             self.buffer_a
@@ -322,7 +323,7 @@ fn prepare_cs_model_inverse(device: &wgpu::Device) -> wgpu::ComputePipeline {
                     min_binding_size: None,
                 },
                 count: None,
-            }
+            },
         ],
     });
 
@@ -331,7 +332,7 @@ fn prepare_cs_model_inverse(device: &wgpu::Device) -> wgpu::ComputePipeline {
         bind_group_layouts: &[&bgl],
         push_constant_ranges: &[wgpu::PushConstantRange {
             stages: wgpu::ShaderStages::COMPUTE,
-            range: 0..8,
+            range: 0..12,
         }],
     });
 
@@ -348,7 +349,3 @@ fn prepare_cs_model_inverse(device: &wgpu::Device) -> wgpu::ComputePipeline {
         cache: None,
     })
 }
-
-
-
-

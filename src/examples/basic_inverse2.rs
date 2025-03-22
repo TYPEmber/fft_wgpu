@@ -30,7 +30,7 @@ async fn main() {
         .await
         .unwrap();
 
-    let data = vec![Complex::new(2.0, 423.0); 512 * 500 * 5];
+    let data = vec![Complex::new(1.0, 0.0); 512 * 500 * 5];
     let len = data.len();
 
     // let mut data_cpu = data
@@ -157,7 +157,7 @@ mod test{
             )
             .await
             .unwrap();
-        let data = vec![Complex::new(2.0, 42.0); 512 * 500 * 5];
+        let data = vec![Complex::new(2.0, 1.0); 512 * 500 * 5];
         let len = data.len();
         let mut ans = vec![Complex::ZERO; len];
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -201,7 +201,7 @@ mod test{
             let data = buffer_slice.get_mapped_range();
             // // Since contents are got in bytes, this converts these bytes back to u32
             bytemuck::cast_slice(&data).clone_into(&mut ans);
-             println!("{:?}", &ans[..10]);
+           //  println!("{:?}", &ans[..10]);
             // With the current interface, we have to make sure all mapped views are
             // dropped before we unmap the buffer.
             drop(data);

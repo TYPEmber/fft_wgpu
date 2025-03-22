@@ -19,3 +19,7 @@ path = "src/examples/basic.rs"
 name = "basic_inverse"
 path = "src/examples/basic_inverse.rs"
 
+[[example]]
+name = "basic_inverse2"
+path = "src/examples/basic_inverse2.rs"
+
