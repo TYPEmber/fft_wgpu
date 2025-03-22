@@ -6,16 +6,16 @@ var<storage, read_write> buffer_b: array<vec2<f32>>;
 const PI: f32 = 3.14159265358979323846;
 const workgroup_len: u32 = 32u;
 
-struct PushConstants { fft_len: u32, stage: u32 }
+struct PushConstants { fft_len: u32, stage: u32,round_num:u32}
 var<push_constant> consts: PushConstants;
 
 @compute @workgroup_size(workgroup_len)
-fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups) num_workgroups: vec3<u32>, @builtin(local_invocation_index) local
+fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups) num_workgroups: vec3<u32>, @builtin(local_invocation_index) local_invocation_index: u32) {
     let fft_len = consts.fft_len;
-    let index = (workgroup_id.x + workgroup_id.y * num_workgroups.x + workgroup_id.z * num_workgroups.y * num_workgroups.x) * workgroup_len + loca
+
+    let index = (workgroup_id.x + workgroup_id.y * num_workgroups.x + workgroup_id.z * num_workgroups.y * num_workgroups.x) * workgroup_len + local_invocation_index;
     let offset = index / (fft_len / 2u) * fft_len;
-    let round_num = u32(log2(f32(fft_len)));
-   ifft(index % (fft_len / 2u), fft_len, offset, consts.stage,round_num);
+   ifft(index % (fft_len / 2u), fft_len, offset, consts.stage,consts.round_num);
 
 }
 
@@ -64,3 +64,55 @@ fn ifft(idx: u32, n: u32, offset: u32, stage: u32,round_num:u32) {
 fn complex_mul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

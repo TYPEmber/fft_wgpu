@@ -102,8 +102,8 @@ impl<'a> Forward<'a> {
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &bind_group_forward, &[]);
 
-        let x = (self.fft_len / 2 / 32).max(1);
-        let y = (self.buffer_a.size() / 8 / self.fft_len as u64) as u32;
+        let x = (self.fft_len / 2 / 32).max(1); //每个x对应一组fft运算
+        let y = (self.buffer_a.size() / 8 / self.fft_len as u64) as u32;//一个data中有2个u32，一个u32有4个byte
         let z = 1;
 
         // dbg!(self);
@@ -194,6 +194,7 @@ pub struct Inverse<'a> {
 }
 
 impl<'a> Inverse<'a> {
+
     pub fn new(
         device: &'a wgpu::Device,
         queue: &'a wgpu::Queue,
@@ -216,7 +217,7 @@ impl<'a> Inverse<'a> {
         });
 
         // Instantiates the bind group, once again specifying the binding of buffers.
-        let bind_group_forward = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group_inverse = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &pipeline_inverse.get_bind_group_layout(0),
             entries: &[
@@ -235,7 +236,7 @@ impl<'a> Inverse<'a> {
             device,
             queue,
             pipeline: pipeline_inverse,
-            bind_group: bind_group_forward,
+            bind_group: bind_group_inverse,
             fft_len,
             buffer_a,
             buffer_b,
@@ -292,12 +293,352 @@ impl<'a> Inverse<'a> {
     }
 }
 
+
+
+
+
+
+
+
 fn prepare_cs_model_inverse(device: &wgpu::Device) -> wgpu::ComputePipeline {
     // Loads the shader from WGSL
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
             "kernel/ifft.wgsl"
+        ))),
+    });
+
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let ppl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[wgpu::PushConstantRange {
+            stages: wgpu::ShaderStages::COMPUTE,
+            range: 0..12,
+        }],
+    });
+
+    // Instantiates the pipeline.
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&ppl),
+        module: &cs_module,
+        entry_point: Some("main"),
+        compilation_options: wgpu::PipelineCompilationOptions {
+            zero_initialize_workgroup_memory: false,
+            ..Default::default()
+        },
+        cache: None,
+    })
+}
+
+
+pub struct Normalize<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    pipeline: wgpu::ComputePipeline,
+    bind_group: wgpu::BindGroup,
+    buffer_a: &'a wgpu::Buffer,
+    buffer_b: wgpu::Buffer,
+    // pub round_num: wgpu::Buffer,
+    //pub fft_len_buf: wgpu::Buffer,
+    pub fft_len: u32,
+}
+
+impl<'a> Normalize<'a> {
+    pub fn new(
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        src: &'a wgpu::Buffer,
+        fft_len: u32,
+    ) -> Self {
+        let pipeline_normalize = prepare_cs_model_normalize(device);
+
+        let data_len = src.size();
+
+        let buffer_a = src;
+
+        let buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: data_len,
+            usage: wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        // Instantiates the bind group, once again specifying the binding of buffers.
+        let bind_group_normalize = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline_normalize.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffer_b.as_entire_binding(),
+                },
+            ],
+        });
+
+        Self {
+            device,
+            queue,
+            pipeline: pipeline_normalize,
+            bind_group: bind_group_normalize,
+            fft_len,
+            buffer_a,
+            buffer_b,
+        }
+    }
+
+    pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
+        let bind_group_normalize = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffer_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.buffer_b.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+        
+        cpass.set_pipeline(&self.pipeline);
+        cpass.set_bind_group(0, &bind_group_normalize, &[]);
+
+
+        
+        let x = (self.fft_len / 32).max(1);
+        let y = (self.buffer_a.size() / 8 / self.fft_len as u64) as u32;
+        let z = 1;
+
+        // dbg!(self);
+
+        cpass.set_push_constants(0, &self.fft_len.to_le_bytes());
+        cpass.dispatch_workgroups(x, y, z);
+
+       
+            &self.buffer_b
+    }
+}
+
+
+fn prepare_cs_model_normalize(device: &wgpu::Device) -> wgpu::ComputePipeline {
+    // Loads the shader from WGSL
+    let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+            "kernel/normalize.wgsl"
+        ))),
+    });
+
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let ppl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[wgpu::PushConstantRange {
+            stages: wgpu::ShaderStages::COMPUTE,
+            range: 0..4,
+        }],
+    });
+
+    // Instantiates the pipeline.
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&ppl),
+        module: &cs_module,
+        entry_point: Some("main"),
+        compilation_options: wgpu::PipelineCompilationOptions {
+            zero_initialize_workgroup_memory: false,
+            ..Default::default()
+        },
+        cache: None,
+    })
+}
+
+pub struct Onlyinverse<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    pipeline: wgpu::ComputePipeline,
+    bind_group: wgpu::BindGroup,
+    buffer_a: &'a wgpu::Buffer,
+    buffer_b: wgpu::Buffer,
+    // pub round_num: wgpu::Buffer,
+    //pub fft_len_buf: wgpu::Buffer,
+    pub fft_len: u32,
+}
+
+impl<'a> Onlyinverse<'a> {
+
+    pub fn new(
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        src: &'a wgpu::Buffer,
+        fft_len: u32,
+    ) -> Self {
+        let pipeline_onlyinverse = prepare_cs_model_onlyinverse(device);
+
+        let data_len = src.size();
+
+        let buffer_a = src;
+
+        let buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: data_len,
+            usage: wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        // Instantiates the bind group, once again specifying the binding of buffers.
+        let bind_group_onlyinverse = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline_onlyinverse.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffer_b.as_entire_binding(),
+                },
+            ],
+        });
+
+        Self {
+            device,
+            queue,
+            pipeline: pipeline_onlyinverse,
+            bind_group: bind_group_onlyinverse,
+            fft_len,
+            buffer_a,
+            buffer_b,
+        }
+    }
+
+    pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
+        let bind_group_onlyinverse = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffer_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.buffer_b.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+
+        cpass.set_pipeline(&self.pipeline);
+        cpass.set_bind_group(0, &bind_group_onlyinverse, &[]);
+
+        let x = (self.fft_len / 2 / 32).max(1);
+        let y = (self.buffer_a.size() / 8 / self.fft_len as u64) as u32;
+        let z = 1;
+
+        // dbg!(self);
+
+        cpass.set_push_constants(0, &self.fft_len.to_le_bytes());
+        let round_num = self.fft_len.trailing_zeros();
+        cpass.set_push_constants(8, &round_num.to_le_bytes());
+
+        for i in 0..(self.fft_len as f32).log2().round() as u32 {
+            cpass.set_push_constants(4, &i.to_le_bytes());
+            cpass.dispatch_workgroups(x, y, z);
+        }
+
+       
+       
+
+        if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
+            self.buffer_a
+        } else {
+            &self.buffer_b
+        }
+    }
+}
+
+
+
+fn prepare_cs_model_onlyinverse(device: &wgpu::Device) -> wgpu::ComputePipeline {
+    // Loads the shader from WGSL
+    let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+            "kernel/onlyifft.wgsl"
         ))),
     });
 
