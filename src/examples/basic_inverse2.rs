@@ -64,7 +64,7 @@ async fn main() {
         mapped_at_creation: false,
     });
 
-    let n_src = device.create_buffer(&wgpu::BufferDescriptor {
+    let buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: (len * std::mem::size_of::<Complex>()) as u64,
         usage: wgpu::BufferUsages::COPY_DST
@@ -73,9 +73,9 @@ async fn main() {
         mapped_at_creation: false,
     });
 
-    let fft_onlyinverse = fft_wgpu::Onlyinverse::new(&device, &queue, &src, 512);
+    let fft_onlyinverse = fft_wgpu::Onlyinverse::new(&device, &queue, &src,&buffer_b,512);
     // let fft_forward_2 = fft_wgpu::Forward::new(&device, &queue, &src, 16);
-    let normalize = fft_wgpu::Normalize::new(&device, &queue, &n_src, 512);
+    let normalize = fft_wgpu::Normalize::new(&device, &queue, &src, &buffer_b,512);
     let timer = std::time::Instant::now();
 
     for _ in 0..1000 {
@@ -85,16 +85,9 @@ async fn main() {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        let output = fft_onlyinverse.proc(&mut encoder);
+        let _output = fft_onlyinverse.proc(&mut encoder);
         // let output = fft_forward.proc(&mut encoder);
         //let output = fft_forward_2.proc(&mut encoder);
-        encoder.copy_buffer_to_buffer(
-            output,
-            0,
-            &n_src,
-            0,
-            (len * std::mem::size_of::<Complex>()) as u64,
-        );
 
         let output2 = normalize.proc(&mut encoder);
 
@@ -173,7 +166,7 @@ mod test {
             )
             .await
             .unwrap();
-        let data = vec![Complex::new(2.3, 3.0); 512 * 500 * 5];
+        let data = vec![Complex::new(2.132, 3.0); 512 * 500 * 5];
         let len = data.len();
         // let mut data_cpu = data
         //     .iter()
@@ -202,7 +195,7 @@ mod test {
                 | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        let n_src = device.create_buffer(&wgpu::BufferDescriptor {
+        let src2 = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: (len * std::mem::size_of::<Complex>()) as u64,
             usage: wgpu::BufferUsages::COPY_DST
@@ -210,9 +203,9 @@ mod test {
                 | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        let fft_onlyinverse = fft_wgpu::Onlyinverse::new(&device, &queue, &src, 512);
+        let fft_onlyinverse = fft_wgpu::Onlyinverse::new(&device, &queue, &src,&src2, 512);
         // let fft_forward_2 = fft_wgpu::Forward::new(&device, &queue, &src, 16);
-        let normalize = fft_wgpu::Normalize::new(&device, &queue, &n_src, 512);
+        let normalize = fft_wgpu::Normalize::new(&device, &queue, &src,&src2, 512);
         let timer = std::time::Instant::now();
         for _ in 0..1 {
             queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
@@ -220,16 +213,9 @@ mod test {
             // It is to WebGPU what a command buffer is to Vulkan.
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-            let output = fft_onlyinverse.proc(&mut encoder);
+            let _output = fft_onlyinverse.proc(&mut encoder);
             // let output = fft_forward.proc(&mut encoder);
             //let output = fft_forward_2.proc(&mut encoder);
-            encoder.copy_buffer_to_buffer(
-                output,
-                0,
-                &n_src,
-                0,
-                (len * std::mem::size_of::<Complex>()) as u64,
-            );
             let output2 = normalize.proc(&mut encoder);
             encoder.copy_buffer_to_buffer(
                 output2,

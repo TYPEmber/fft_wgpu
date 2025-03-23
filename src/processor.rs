@@ -365,7 +365,7 @@ pub struct Normalize<'a> {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
     buffer_a: &'a wgpu::Buffer,
-    buffer_b: wgpu::Buffer,
+    buffer_b: &'a wgpu::Buffer,
     // pub round_num: wgpu::Buffer,
     //pub fft_len_buf: wgpu::Buffer,
     pub fft_len: u32,
@@ -375,24 +375,21 @@ impl<'a> Normalize<'a> {
     pub fn new(
         device: &'a wgpu::Device,
         queue: &'a wgpu::Queue,
-        src: &'a wgpu::Buffer,
+        buffer1: &'a wgpu::Buffer,
+        buffer2: &'a wgpu::Buffer,
         fft_len: u32,
     ) -> Self {
         let pipeline_normalize = prepare_cs_model_normalize(device);
 
-        let data_len = src.size();
+       // let data_len = buffer1.size();
 
-        let buffer_a = src;
+        let num_rounds=fft_len.trailing_zeros();
 
-        let buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: data_len,
-            usage: wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-
+        let (buffer_a, buffer_b) = if num_rounds%2 == 0 {
+            (buffer1, buffer2)
+        } else {
+            (buffer2, buffer1)
+        };
         // Instantiates the bind group, once again specifying the binding of buffers.
         let bind_group_normalize = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
@@ -456,7 +453,7 @@ impl<'a> Normalize<'a> {
         cpass.dispatch_workgroups(x, y, z);
 
        
-            &self.buffer_b
+            self.buffer_b
     }
 }
 
@@ -525,7 +522,7 @@ pub struct Onlyinverse<'a> {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
     buffer_a: &'a wgpu::Buffer,
-    buffer_b: wgpu::Buffer,
+    buffer_b: &'a wgpu::Buffer,
     // pub round_num: wgpu::Buffer,
     //pub fft_len_buf: wgpu::Buffer,
     pub fft_len: u32,
@@ -537,22 +534,16 @@ impl<'a> Onlyinverse<'a> {
         device: &'a wgpu::Device,
         queue: &'a wgpu::Queue,
         src: &'a wgpu::Buffer,
+        src2: &'a wgpu::Buffer,
         fft_len: u32,
     ) -> Self {
         let pipeline_onlyinverse = prepare_cs_model_onlyinverse(device);
 
-        let data_len = src.size();
+       // let data_len = src.size();
 
         let buffer_a = src;
 
-        let buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: data_len,
-            usage: wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
+        let buffer_b=src2;
 
         // Instantiates the bind group, once again specifying the binding of buffers.
         let bind_group_onlyinverse = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -626,7 +617,7 @@ impl<'a> Onlyinverse<'a> {
         if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
             self.buffer_a
         } else {
-            &self.buffer_b
+            self.buffer_b
         }
     }
 }
