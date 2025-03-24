@@ -30,7 +30,8 @@ async fn main() {
         .await
         .unwrap();
 
-    let data = vec![Complex::new(1.0, 0.0); 16];
+    let mut data = vec![Complex::new(0.0, 0.0); 16];
+    data[0]=Complex::new(16.0, 0.0);
     let len = data.len();
 
     // let mut data_cpu = data
@@ -69,7 +70,7 @@ async fn main() {
 
     let timer = std::time::Instant::now();
 
-    for _ in 0..1000 {
+    for _ in 0..1 {
         queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
         // A command encoder executes one or many pipelines.
         // It is to WebGPU what a command buffer is to Vulkan.
@@ -77,7 +78,7 @@ async fn main() {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         let output = fft_forward.proc(&mut encoder);
-         let output = fft_forward.proc(&mut encoder);
+         //let output = fft_forward.proc(&mut encoder);
         //let output = fft_forward_2.proc(&mut encoder);
 
         encoder.copy_buffer_to_buffer(
