@@ -166,7 +166,7 @@ mod test {
             )
             .await
             .unwrap();
-        let data = vec![Complex::new(2.132, 3.0); 512 * 500 * 5];
+        let data = vec![Complex::new(2.1327392395, 3.033729); 512 * 500 * 5];
         let len = data.len();
         // let mut data_cpu = data
         //     .iter()
