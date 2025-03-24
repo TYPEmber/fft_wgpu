@@ -30,8 +30,7 @@ async fn main() {
         .await
         .unwrap();
 
-    let mut data = vec![Complex::new(0.0, 0.0); 16];
-    data[0]=Complex::new(16.0, 0.0);
+        let data = vec![Complex::new(1.0, 0.0); 512 * 500 * 5];
     let len = data.len();
 
     // let mut data_cpu = data
@@ -65,12 +64,12 @@ async fn main() {
         mapped_at_creation: false,
     });
 
-    let fft_forward = fft_wgpu::Forward::new(&device, &queue, &src, 16);
+    let fft_forward = fft_wgpu::Forward::new(&device, &queue, &src, 512);
     // let fft_forward_2 = fft_wgpu::Forward::new(&device, &queue, &src, 16);
 
     let timer = std::time::Instant::now();
 
-    for _ in 0..1 {
+    for _ in 0..1000 {
         queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
         // A command encoder executes one or many pipelines.
         // It is to WebGPU what a command buffer is to Vulkan.
@@ -113,7 +112,7 @@ async fn main() {
         // // Since contents are got in bytes, this converts these bytes back to u32
         bytemuck::cast_slice(&data).clone_into(&mut ans);
 
-         println!("{:?}", &ans[..]);
+        // println!("{:?}", &ans[..]);
 
         // With the current interface, we have to make sure all mapped views are
         // dropped before we unmap the buffer.
