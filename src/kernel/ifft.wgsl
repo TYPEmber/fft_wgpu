@@ -14,6 +14,9 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups)
     let fft_len = consts.fft_len;
 
     let index = (workgroup_id.x + workgroup_id.y * num_workgroups.x + workgroup_id.z * num_workgroups.y * num_workgroups.x) * workgroup_len + local_invocation_index;
+     if index >= arrayLength(&buffer_a) / 2u {
+        return;
+    }
     let offset = index / (fft_len / 2u) * fft_len;
    ifft(index % (fft_len / 2u), fft_len, offset, consts.stage,consts.round_num);
 

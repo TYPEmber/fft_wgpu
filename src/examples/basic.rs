@@ -4,7 +4,6 @@ use num_complex::Complex32 as Complex;
 async fn main() {
     // Instantiates instance of WebGPU
     let instance = wgpu::Instance::default();
-
     // `request_adapter` instantiates the general connection to the GPU
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -112,7 +111,7 @@ async fn main() {
         // // Since contents are got in bytes, this converts these bytes back to u32
         bytemuck::cast_slice(&data).clone_into(&mut ans);
 
-        // println!("{:?}", &ans[..]);
+         println!("{:?}", &ans[..10]);
 
         // With the current interface, we have to make sure all mapped views are
         // dropped before we unmap the buffer.
