@@ -14,6 +14,10 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups)
     let fft_len = consts.fft_len;
     let index = (workgroup_id.x + workgroup_id.y * num_workgroups.x + workgroup_id.z * num_workgroups.y * num_workgroups.x) * workgroup_len + local_invocation_index;
     let offset = index / (fft_len / 2u) * fft_len;
+
+    if index >= arrayLength(&buffer_a) / 2u {
+        return;
+    }
    
    fft(index % (fft_len / 2u), fft_len, offset, consts.stage);
 }
@@ -23,12 +27,6 @@ fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
     // 每个工作项处理一个蝶形运算
     let block_size = 2u * J;
     let total_blocks = n / block_size;
-
-    if idx >= total_blocks * J {
-        // buffer_a[idx] = vec2<f32>(f32(offset), f32(stage));
-        // buffer_b[idx] = vec2<f32>(f32(offset), f32(block_size));
-        return;
-    }
 
     let block_idx = idx / J;
     let j = idx % J;
