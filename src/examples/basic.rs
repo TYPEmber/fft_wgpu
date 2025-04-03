@@ -13,7 +13,7 @@ async fn main() {
         .await
         .unwrap();
 
-    dbg!(adapter.limits());
+    //dbg!(adapter.limits());
 
     // `request_device` instantiates the feature specific connection to the GPU, defining some parameters,
     //  `features` being the available features.
@@ -65,17 +65,19 @@ async fn main() {
 
     let fft_forward = fft_wgpu::Forward::new(&device, &queue, &src, 512);
     // let fft_forward_2 = fft_wgpu::Forward::new(&device, &queue, &src, 16);
-
+    let buffer_slice = staging_buffer.slice(..);
+   
     let timer = std::time::Instant::now();
 
     for _ in 0..1000 {
         queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
         // A command encoder executes one or many pipelines.
         // It is to WebGPU what a command buffer is to Vulkan.
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+         let mut encoder =
+          device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         let output = fft_forward.proc(&mut encoder);
+        //let output=fft_forward.buffer_a;
          //let output = fft_forward.proc(&mut encoder);
         //let output = fft_forward_2.proc(&mut encoder);
 
@@ -88,41 +90,43 @@ async fn main() {
         );
 
         queue.submit(Some(encoder.finish()));
-
+       // queue.submit(None);
         // let rn = fft_forward.round_num.slice(..);
 
         // rn.map_async(wgpu::MapMode::Read, move |_| {});
 
-        // device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+         //device.poll(wgpu::Maintain::wait()).panic_on_timeout();
         // let a: Vec<u8> = rn.get_mapped_range().iter().copied().collect();
         // dbg!(a);
         // fft_forward.round_num.unmap();
 
         // Note that we're not calling `.await` here.
-        let buffer_slice = staging_buffer.slice(..);
-
-        buffer_slice.map_async(wgpu::MapMode::Read, move |_| {});
-
-        device.poll(wgpu::Maintain::wait()).panic_on_timeout();
-
+        
+         buffer_slice.map_async(wgpu::MapMode::Read, move |_| {});
+         device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+         let data1 = buffer_slice.get_mapped_range();
+       
+        
         // Gets contents of buffer
-        let data = buffer_slice.get_mapped_range();
-
+       
+       
         // // Since contents are got in bytes, this converts these bytes back to u32
-        bytemuck::cast_slice(&data).clone_into(&mut ans);
-
-         println!("{:?}", &ans[..10]);
+         bytemuck::cast_slice(&data1).clone_into(&mut ans);
+        
+         //println!("{:?}", &ans[..10]);
 
         // With the current interface, we have to make sure all mapped views are
         // dropped before we unmap the buffer.
-        drop(data);
-        staging_buffer.unmap(); // Unmaps buffer from memory
+         drop(data1);
+         staging_buffer.unmap(); // Unmaps buffer from memory
         // If you are familiar with C++ these 2 lines can be thought of similarly to:
         //   delete myPointer;
         //   myPointer = NULL;
         // It effectively frees the memory
     }
+   
     dbg!(timer.elapsed());
+    
 }
 
 

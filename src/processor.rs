@@ -1,4 +1,7 @@
 use wgpu::hal::auxil::db;
+use std::f64::consts::PI;
+use num_complex::Complex;
+use wgpu::util::DeviceExt;
 
 #[derive(Debug)]
 pub struct Forward<'a> {
@@ -6,8 +9,9 @@ pub struct Forward<'a> {
     queue: &'a wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
-    buffer_a: &'a wgpu::Buffer,
+    pub buffer_a: &'a wgpu::Buffer,
     buffer_b: wgpu::Buffer,
+    twiddle_buffer: wgpu::Buffer,
     //pub round_num: wgpu::Buffer,
     // pub fft_len_buf: wgpu::Buffer,
     pub fft_len: u32,
@@ -34,6 +38,23 @@ impl<'a> Forward<'a> {
                 | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
+
+        let n = fft_len as usize;
+        let mut twiddles = Vec::with_capacity(n/2);
+        
+        for k in 0..n/2 {
+            let theta = -2.0 * PI * (k as f64)/ (n as f64);
+            twiddles.push(Complex::new(theta.cos()as f32, theta.sin() as f32));
+        }
+        
+        let twiddle_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Twiddle Buffer"),
+            contents: bytemuck::cast_slice(&twiddles),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+    
+
+
 
         // let round_num = device.create_buffer(&wgpu::BufferDescriptor {
         // label: None,
@@ -62,6 +83,10 @@ impl<'a> Forward<'a> {
                     binding: 1,
                     resource: buffer_b.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: twiddle_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -70,9 +95,11 @@ impl<'a> Forward<'a> {
             queue,
             pipeline: pipeline_forward,
             bind_group: bind_group_forward,
-            fft_len,
+           
             buffer_a,
             buffer_b,
+            twiddle_buffer,
+            fft_len
             //round_num,
             // fft_len_buf,
         }
@@ -90,6 +117,10 @@ impl<'a> Forward<'a> {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: self.buffer_b.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.twiddle_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -155,6 +186,18 @@ fn prepare_cs_model(device: &wgpu::Device) -> wgpu::ComputePipeline {
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,  // 新增Twiddle绑定
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+
+
         ],
     });
 

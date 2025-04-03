@@ -2,6 +2,8 @@
 var<storage, read_write> buffer_a: array<vec2<f32>>;
 @group(0) @binding(1)
 var<storage, read_write> buffer_b: array<vec2<f32>>;
+@group(0) @binding(2)  // 新增Twiddle因子缓冲区
+var<storage, read> twiddles: array<vec2<f32>>;
 
 const PI: f32 = 3.14159265358979323846;
 const workgroup_len: u32 = 32u;
@@ -26,21 +28,23 @@ fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
     let J = 1u << stage;
     // 每个工作项处理一个蝶形运算
     let block_size = 2u * J;
-    let total_blocks = n / block_size;
+    //let total_blocks = n / block_size;
 
     let block_idx = idx / J;
     let j = idx % J;
 
-    let s = block_idx;
-    let theta = - 2.0 * PI * f32(s * J) / f32(n);
-    let twiddle = vec2<f32>(cos(theta), sin(theta));
+    //let s = block_idx;
+    let twiddle = twiddles[block_idx*J];  
+  // let twiddle=vec2<f32>(1.0,0.0);
+   // let theta = - 2.0 * PI * f32(s * J) / f32(n);
+  //  let twiddle = vec2<f32>(cos(theta), sin(theta));
 
     // 输入位置
-    let idx1 = s * J + j + offset;
+    let idx1 = block_idx * J + j + offset;
     let idx2 = idx1 + n / 2u;
 
     // 输出位置
-    let out_idx1 = s * block_size + j + offset;
+    let out_idx1 = block_idx * block_size + j + offset;
     let out_idx2 = out_idx1 + J;
 
     // 根据阶段奇偶性确定读写缓冲区
