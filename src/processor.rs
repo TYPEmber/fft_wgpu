@@ -15,6 +15,7 @@ pub struct Forward<'a> {
     //pub round_num: wgpu::Buffer,
     // pub fft_len_buf: wgpu::Buffer,
     pub fft_len: u32,
+    pub data_len:u32,
 }
 
 impl<'a> Forward<'a> {
@@ -27,7 +28,7 @@ impl<'a> Forward<'a> {
         let pipeline_forward = prepare_cs_model(device);
 
         let data_len = src.size();
-
+        let data_len_u32 = data_len as u32;
         let buffer_a = src;
 
         let buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
@@ -99,7 +100,8 @@ impl<'a> Forward<'a> {
             buffer_a,
             buffer_b,
             twiddle_buffer,
-            fft_len
+            fft_len,
+            data_len:data_len_u32
             //round_num,
             // fft_len_buf,
         }
@@ -133,23 +135,25 @@ impl<'a> Forward<'a> {
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &bind_group_forward, &[]);
 
-        let x = (self.fft_len / 2 / 32).max(1); //每个x对应一组fft运算
-        let y = (self.buffer_a.size() / 8 / self.fft_len as u64) as u32;//一个data中有2个u32，一个u32有4个byte
+        //let x = (self.fft_len / 2 / 512).max(1); //每个x对应一组fft运算
+        let x =self.data_len/self.fft_len;
+        //let y =(self.buffer_a.size() / 8 / self.fft_len as u64) as u32;//一个data中有2个u32，一个u32有4个byte
+        let y=1;
         let z = 1;
 
         // dbg!(self);
 
         cpass.set_push_constants(0, &self.fft_len.to_le_bytes());
-
-        for i in 0..(self.fft_len as f32).log2().round() as u32 {
+        let i:u32=0;
+        //for i in 0..(self.fft_len as f32).log2().round() as u32 {
             cpass.set_push_constants(4, &i.to_le_bytes());
             cpass.dispatch_workgroups(x, y, z);
-        }
+       //}
 
         if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
             self.buffer_a
         } else {
-            &self.buffer_b
+        &self.buffer_b
         }
     }
 }
@@ -159,7 +163,7 @@ fn prepare_cs_model(device: &wgpu::Device) -> wgpu::ComputePipeline {
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-            "kernel/fft.wgsl"
+            "kernel/fft4.wgsl"
         ))),
     });
 

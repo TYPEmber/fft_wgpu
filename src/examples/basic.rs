@@ -29,7 +29,7 @@ async fn main() {
         .await
         .unwrap();
 
-        let data = vec![Complex::new(1.0, 0.0); 512 * 500 * 5];
+        let data = vec![Complex::new(1.0, 0.0); 512*500*5 ];
     let len = data.len();
 
     // let mut data_cpu = data
@@ -113,7 +113,8 @@ async fn main() {
         // // Since contents are got in bytes, this converts these bytes back to u32
          bytemuck::cast_slice(&data1).clone_into(&mut ans);
         
-         //println!("{:?}", &ans[..10]);
+        // println!("{:?}", &ans[..10]);
+         //println!("{:?}", &ans[512..520]);
 
         // With the current interface, we have to make sure all mapped views are
         // dropped before we unmap the buffer.
@@ -209,7 +210,7 @@ async fn test_fft() {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        let _output = fft_forward.proc(&mut encoder);
+       // let _output = fft_forward.proc(&mut encoder);
         let  output= fft_forward.proc(&mut encoder);
         // let output = fft_forward.proc(&mut encoder);
         //let output = fft_forward_2.proc(&mut encoder);

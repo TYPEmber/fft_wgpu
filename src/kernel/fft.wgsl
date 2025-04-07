@@ -6,7 +6,7 @@ var<storage, read_write> buffer_b: array<vec2<f32>>;
 var<storage, read> twiddles: array<vec2<f32>>;
 
 const PI: f32 = 3.14159265358979323846;
-const workgroup_len: u32 = 32u;
+const workgroup_len: u32 = 512u;
 
 struct PushConstants { fft_len: u32, stage: u32 }
 var<push_constant> consts: PushConstants;
@@ -61,7 +61,23 @@ fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
         buffer_a[out_idx2] = complex_mul(a - b, twiddle);
     }
 }
+fn fft2(idx: u32, n: u32, offset: u32, stage: u32) {
+    let tid= idx % n;
+    let bits = u32(log2(f32(n)));
+    let target_idx = bit_reverse(tid, bits);
+
+}
 
 fn complex_mul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+}
+
+fn bit_reverse(n: u32, bits: u32) -> u32 {
+    var reversed = 0u;
+    var n1 = n;
+    for (var i = 0u; i < bits; i++) {
+        reversed = (reversed << 1u) | (n1 & 1u);  //将待处理的数字左移一位，最后一位由n1的最后一位决定
+        n1 >>= 1u;   //n1右移一位
+    }
+    return reversed;
 }
