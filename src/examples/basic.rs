@@ -247,7 +247,7 @@ async fn test_fft() {
         // // Since contents are got in bytes, this converts these bytes back to u32
         bytemuck::cast_slice(&data).clone_into(&mut ans);
 
-         println!("{:?}", &ans[..16]);
+        println!("{:?}", &ans[..16]);
 
         // With the current interface, we have to make sure all mapped views are
         // dropped before we unmap the buffer.

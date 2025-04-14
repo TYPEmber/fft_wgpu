@@ -6,7 +6,7 @@ var<storage, read_write> output : array<vec2 < f32>>;
 var<storage, read> twiddles : array<vec2 < f32>>;
 
 const PI : f32 = 3.14159265358979323846;
-const workgroup_len : u32 = 256u;
+const workgroup_len : u32 = 128u;
 struct PushConstants { fft_len : u32, stage : u32 }
     var<push_constant> consts : PushConstants;
 
@@ -21,12 +21,14 @@ fn main(
     let workgroup_index=workgroup_id.x + workgroup_id.y * num_workgroups.x + workgroup_id.z * num_workgroups.y * num_workgroups.x;
     let offset=workgroup_index*consts.fft_len;
     fft(consts.fft_len,local_index,offset);
-    }
-    fn fft(fft_len:u32,local_index:u32,offset:u32)
-    {
-        let n = fft_len;
+}
+
+
+
+fn fft(fft_len:u32,local_index:u32,offset:u32){
+     let n = fft_len;
         //let tid = global_id.x;
-        let local_tid = local_index;
+    let local_tid = local_index;
         //let workgroup_size = 512u;
 
         // 初始化共享内存（带边界保护）
@@ -72,15 +74,16 @@ fn main(
            // ==== 关键修改3：正确旋转因子计算 ====
               //let theta = -2.0 * PI * f32(J) * f32(s) / f32(n);
 
-          // let theta = -PI * f32(j) / f32(J); // Stockham专用公式
-           // let twiddle = vec2<f32>(cos(theta), sin(theta));
-            let twiddle = twiddles[s*J];  
+           let theta = -PI * f32(j) / f32(J); // Stockham专用公式
+            let twiddle = vec2<f32>(cos(theta), sin(theta));
+            //let twiddle = twiddles[s*J];  
            // 蝶形运算
             if stage % 2u == 0u {
                 let a = input[pos1_in];
             //let b = complex_mul(shared_in[pos2_in], twiddle);
                 let b=input[pos2_in];
                  output[pos1_out] = a + b;
+
                 output[pos2_out] = complex_mul((a - b),twiddle);
             }
          else {

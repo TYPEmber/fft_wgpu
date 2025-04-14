@@ -20,7 +20,6 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups)
     if index >= arrayLength(&buffer_a) / 2u {
         return;
     }
-   
    fft(index % (fft_len / 2u), fft_len, offset, consts.stage);
 }
 
@@ -33,11 +32,11 @@ fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
     let block_idx = idx / J;
     let j = idx % J;
 
-    //let s = block_idx;
-    let twiddle = twiddles[block_idx*J];  
-  // let twiddle=vec2<f32>(1.0,0.0);
-   // let theta = - 2.0 * PI * f32(s * J) / f32(n);
-  //  let twiddle = vec2<f32>(cos(theta), sin(theta));
+    let s = block_idx;
+   // let twiddle = twiddles[block_idx*J];  
+    //let twiddle=vec2<f32>(1.0,0.0);
+    let theta = - 2.0 * PI * f32(s * J) / f32(n);
+    let twiddle = vec2<f32>(cos(theta), sin(theta));
 
     // 输入位置
     let idx1 = block_idx * J + j + offset;
@@ -53,6 +52,7 @@ fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
         let b = buffer_a[idx2];
         buffer_b[out_idx1] = a + b;
         buffer_b[out_idx2] = complex_mul(a - b, twiddle);
+        
     }
     else {
         let a = buffer_b[idx1];
@@ -61,12 +61,12 @@ fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
         buffer_a[out_idx2] = complex_mul(a - b, twiddle);
     }
 }
-fn fft2(idx: u32, n: u32, offset: u32, stage: u32) {
-    let tid= idx % n;
-    let bits = u32(log2(f32(n)));
-    let target_idx = bit_reverse(tid, bits);
+//fn fft2(idx: u32, n: u32, offset: u32, stage: u32) {
+    //let tid= idx % n;
+   // let bits = u32(log2(f32(n)));
+   // let target_idx = bit_reverse(tid, bits);
 
-}
+//}
 
 fn complex_mul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);

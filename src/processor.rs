@@ -1,6 +1,6 @@
-use wgpu::hal::auxil::db;
-use std::f64::consts::PI;
 use num_complex::Complex;
+use std::f64::consts::PI;
+use wgpu::hal::auxil::db;
 use wgpu::util::DeviceExt;
 
 #[derive(Debug)]
@@ -15,7 +15,7 @@ pub struct Forward<'a> {
     //pub round_num: wgpu::Buffer,
     // pub fft_len_buf: wgpu::Buffer,
     pub fft_len: u32,
-    pub data_len:u32,
+    pub data_len: u32,
 }
 
 impl<'a> Forward<'a> {
@@ -41,21 +41,18 @@ impl<'a> Forward<'a> {
         });
 
         let n = fft_len as usize;
-        let mut twiddles = Vec::with_capacity(n/2);
-        
-        for k in 0..n/2 {
-            let theta = -2.0 * PI * (k as f64)/ (n as f64);
-            twiddles.push(Complex::new(theta.cos()as f32, theta.sin() as f32));
+        let mut twiddles = Vec::with_capacity(n / 2);
+
+        for k in 0..n / 2 {
+            let theta = -2.0 * PI * (k as f64) / (n as f64);
+            twiddles.push(Complex::new(theta.cos() as f32, theta.sin() as f32));
         }
-        
-        let twiddle_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+
+        let twiddle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Twiddle Buffer"),
             contents: bytemuck::cast_slice(&twiddles),
             usage: wgpu::BufferUsages::STORAGE,
         });
-    
-
-
 
         // let round_num = device.create_buffer(&wgpu::BufferDescriptor {
         // label: None,
@@ -96,14 +93,13 @@ impl<'a> Forward<'a> {
             queue,
             pipeline: pipeline_forward,
             bind_group: bind_group_forward,
-           
+
             buffer_a,
             buffer_b,
             twiddle_buffer,
             fft_len,
-            data_len:data_len_u32
-            //round_num,
-            // fft_len_buf,
+            data_len: data_len_u32, //round_num,
+                                    // fft_len_buf,
         }
     }
 
@@ -135,25 +131,25 @@ impl<'a> Forward<'a> {
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &bind_group_forward, &[]);
 
-        //let x = (self.fft_len / 2 / 512).max(1); //每个x对应一组fft运算
-        let x =self.data_len/self.fft_len;
-        //let y =(self.buffer_a.size() / 8 / self.fft_len as u64) as u32;//一个data中有2个u32，一个u32有4个byte
-        let y=1;
+        let x = (self.fft_len / 2 / 512).max(1); //每个x对应一组fft运算
+        //let x =self.data_len/self.fft_len;
+        let y = (self.buffer_a.size() / 8 / self.fft_len as u64) as u32; //一个data中有2个u32，一个u32有4个byte
+        //let y=1;
         let z = 1;
 
         // dbg!(self);
 
         cpass.set_push_constants(0, &self.fft_len.to_le_bytes());
-        let i:u32=0;
-        //for i in 0..(self.fft_len as f32).log2().round() as u32 {
+        //let i: u32 = 0;
+        for i in 0..(self.fft_len as f32).log2().round() as u32 {
             cpass.set_push_constants(4, &i.to_le_bytes());
             cpass.dispatch_workgroups(x, y, z);
-       //}
+        }
 
         if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
             self.buffer_a
         } else {
-        &self.buffer_b
+            &self.buffer_b
         }
     }
 }
@@ -163,7 +159,7 @@ fn prepare_cs_model(device: &wgpu::Device) -> wgpu::ComputePipeline {
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-            "kernel/fft4.wgsl"
+            "kernel/fft.wgsl"
         ))),
     });
 
@@ -191,7 +187,7 @@ fn prepare_cs_model(device: &wgpu::Device) -> wgpu::ComputePipeline {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 2,  // 新增Twiddle绑定
+                binding: 2, // 新增Twiddle绑定
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -200,8 +196,6 @@ fn prepare_cs_model(device: &wgpu::Device) -> wgpu::ComputePipeline {
                 },
                 count: None,
             },
-
-
         ],
     });
 
@@ -241,7 +235,6 @@ pub struct Inverse<'a> {
 }
 
 impl<'a> Inverse<'a> {
-
     pub fn new(
         device: &'a wgpu::Device,
         queue: &'a wgpu::Queue,
@@ -329,9 +322,6 @@ impl<'a> Inverse<'a> {
             cpass.dispatch_workgroups(x, y, z);
         }
 
-       
-       
-
         if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
             self.buffer_a
         } else {
@@ -339,13 +329,6 @@ impl<'a> Inverse<'a> {
         }
     }
 }
-
-
-
-
-
-
-
 
 fn prepare_cs_model_inverse(device: &wgpu::Device) -> wgpu::ComputePipeline {
     // Loads the shader from WGSL
@@ -405,7 +388,6 @@ fn prepare_cs_model_inverse(device: &wgpu::Device) -> wgpu::ComputePipeline {
     })
 }
 
-
 pub struct Normalize<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
@@ -428,11 +410,11 @@ impl<'a> Normalize<'a> {
     ) -> Self {
         let pipeline_normalize = prepare_cs_model_normalize(device);
 
-       // let data_len = buffer1.size();
+        // let data_len = buffer1.size();
 
-        let num_rounds=fft_len.trailing_zeros();
+        let num_rounds = fft_len.trailing_zeros();
 
-        let (buffer_a, buffer_b) = if num_rounds%2 == 0 {
+        let (buffer_a, buffer_b) = if num_rounds % 2 == 0 {
             (buffer1, buffer2)
         } else {
             (buffer2, buffer1)
@@ -484,12 +466,10 @@ impl<'a> Normalize<'a> {
             label: None,
             timestamp_writes: None,
         });
-        
+
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &bind_group_normalize, &[]);
 
-
-        
         let x = (self.fft_len / 32).max(1);
         let y = (self.buffer_a.size() / 8 / self.fft_len as u64) as u32;
         let z = 1;
@@ -499,11 +479,9 @@ impl<'a> Normalize<'a> {
         cpass.set_push_constants(0, &self.fft_len.to_le_bytes());
         cpass.dispatch_workgroups(x, y, z);
 
-       
-            self.buffer_b
+        self.buffer_b
     }
 }
-
 
 fn prepare_cs_model_normalize(device: &wgpu::Device) -> wgpu::ComputePipeline {
     // Loads the shader from WGSL
@@ -576,7 +554,6 @@ pub struct Onlyinverse<'a> {
 }
 
 impl<'a> Onlyinverse<'a> {
-
     pub fn new(
         device: &'a wgpu::Device,
         queue: &'a wgpu::Queue,
@@ -586,11 +563,11 @@ impl<'a> Onlyinverse<'a> {
     ) -> Self {
         let pipeline_onlyinverse = prepare_cs_model_onlyinverse(device);
 
-       // let data_len = src.size();
+        // let data_len = src.size();
 
         let buffer_a = src;
 
-        let buffer_b=src2;
+        let buffer_b = src2;
 
         // Instantiates the bind group, once again specifying the binding of buffers.
         let bind_group_onlyinverse = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -658,9 +635,6 @@ impl<'a> Onlyinverse<'a> {
             cpass.dispatch_workgroups(x, y, z);
         }
 
-       
-       
-
         if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
             self.buffer_a
         } else {
@@ -668,8 +642,6 @@ impl<'a> Onlyinverse<'a> {
         }
     }
 }
-
-
 
 fn prepare_cs_model_onlyinverse(device: &wgpu::Device) -> wgpu::ComputePipeline {
     // Loads the shader from WGSL
