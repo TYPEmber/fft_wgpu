@@ -30,7 +30,7 @@ async fn main() {
         .unwrap();
     let mut data = vec![Complex::new(3.0, 0.0); 512 * 500 * 5];
     let data_len = data.len();
-    let mut kernel = vec![Complex::new(1.0, 0.0); 512];
+    let mut kernel = vec![Complex::new(5.0, 0.0); 512];
     kernel.append(&mut data);
     let total_len = kernel.len();
     let mut ans = vec![Complex::ZERO; data_len];

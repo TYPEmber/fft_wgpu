@@ -32,7 +32,7 @@ async fn main() {
     let data = vec![Complex::new(3.0, 0.0); 512*500*5];
     let len = data.len();
 
-    let kernel=vec![Complex::new(1.0, 0.0); 512*500*5];
+    let kernel=vec![Complex::new(5.0, 0.0); 512*500*5];
     let mut ans = vec![Complex::ZERO; len];
     
     let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
