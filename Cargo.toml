@@ -23,3 +23,14 @@ path = "src/examples/basic_inverse.rs"
 name = "basic_inverse2"
 path = "src/examples/basic_inverse2.rs"
 
+[[example]]
+name = "basic_multiply"
+path = "src/examples/basic_multiply.rs"
+
+[[example]]
+name = "convolution"
+path = "src/examples/conv.rs"
+
+[[example]]
+name = "convolution2"
+path = "src/examples/conv2.rs"

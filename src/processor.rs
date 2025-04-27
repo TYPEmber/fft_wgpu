@@ -1,5 +1,6 @@
 use num_complex::Complex;
 use std::f64::consts::PI;
+use std::result;
 use wgpu::hal::auxil::db;
 use wgpu::util::DeviceExt;
 
@@ -685,6 +686,181 @@ fn prepare_cs_model_onlyinverse(device: &wgpu::Device) -> wgpu::ComputePipeline 
             stages: wgpu::ShaderStages::COMPUTE,
             range: 0..12,
         }],
+    });
+
+    // Instantiates the pipeline.
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&ppl),
+        module: &cs_module,
+        entry_point: Some("main"),
+        compilation_options: wgpu::PipelineCompilationOptions {
+            zero_initialize_workgroup_memory: false,
+            ..Default::default()
+        },
+        cache: None,
+    })
+}
+
+pub struct Multiply<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    pipeline: wgpu::ComputePipeline,
+    //bind_group: wgpu::BindGroup,
+    buffer_a: &'a wgpu::Buffer,
+    buffer_b: &'a wgpu::Buffer,
+    result: wgpu::Buffer,
+    // pub round_num: wgpu::Buffer,
+    //pub fft_len_buf: wgpu::Buffer,
+}
+
+impl<'a> Multiply<'a> {
+    pub fn new(
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        src: &'a wgpu::Buffer,
+        src2: &'a wgpu::Buffer,
+    ) -> Self {
+        let pipeline_multiply = prepare_cs_model_multiply(device);
+
+        let data_len = src.size();
+
+        let buffer_a = src;
+        let buffer_b=src2;
+        let result = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: data_len,
+            usage: wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        // Instantiates the bind group, once again specifying the binding of buffers.
+        let bind_group_multiply = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline_multiply.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffer_b.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: result.as_entire_binding(),
+                },
+            ],
+        });
+
+        Self {
+            device,
+            queue,
+            pipeline: pipeline_multiply,
+            //bind_group: bind_group_multiply,
+           
+            buffer_a,
+            buffer_b,
+            result,
+        }
+    }
+
+    pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
+        let bind_group_multiply = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffer_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.buffer_b.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.result.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+
+        cpass.set_pipeline(&self.pipeline);
+        cpass.set_bind_group(0, &bind_group_multiply, &[]);
+        let workgroup_len=64 ;
+        let x = 1024/workgroup_len;
+        let y = (self.buffer_a.size() / 8 / 1024) as u32; //一个字节是8个bit
+        let z = 1;
+
+        // dbg!(self);
+        //for i in 0..(self.fft_len as f32).log2().round() as u32 {
+           // cpass.set_push_constants(4, &i.to_le_bytes());
+            cpass.dispatch_workgroups(x, y, z);
+       // }
+
+        &self.result
+    }
+}
+
+
+
+fn prepare_cs_model_multiply(device: &wgpu::Device) -> wgpu::ComputePipeline {
+    // Loads the shader from WGSL
+    let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+            "kernel/multiply.wgsl"
+        ))),
+    });
+
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let ppl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[],
     });
 
     // Instantiates the pipeline.

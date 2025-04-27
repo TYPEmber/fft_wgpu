@@ -22,14 +22,15 @@ async fn main() {
             &wgpu::DeviceDescriptor {
                 required_features: adapter.features(),
                 required_limits: adapter.limits(),
+                label: Some("GPU Device"),
                 ..Default::default()
             },
-            None,
+            None
         )
         .await
         .unwrap();
 
-        let data = vec![Complex::new(1.0, 0.0); 512*500*5 ];
+    let data = vec![Complex::new(1.0, 0.0); 512*500*5];
     let len = data.len();
 
     // let mut data_cpu = data
@@ -63,13 +64,14 @@ async fn main() {
         mapped_at_creation: false,
     });
 
-    let fft_forward = fft_wgpu::Forward::new(&device, &queue, &src, 512);
+    let fft_forward = fft_wgpu::Forward::new(&device, &queue, &src, 1024);
     // let fft_forward_2 = fft_wgpu::Forward::new(&device, &queue, &src, 16);
     let buffer_slice = staging_buffer.slice(..);
    
     let timer = std::time::Instant::now();
 
     for _ in 0..1000 {
+        // queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
         queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
         // A command encoder executes one or many pipelines.
         // It is to WebGPU what a command buffer is to Vulkan.
@@ -80,7 +82,7 @@ async fn main() {
         //let output=fft_forward.buffer_a;
          //let output = fft_forward.proc(&mut encoder);
         //let output = fft_forward_2.proc(&mut encoder);
-
+        
         encoder.copy_buffer_to_buffer(
             output,
             0,
@@ -88,6 +90,13 @@ async fn main() {
             0,
             (len * std::mem::size_of::<Complex>()) as u64,
         );
+        // encoder.copy_buffer_to_buffer(
+        //     output,
+        //     0,
+        //     &staging_buffer,
+        //     0,
+        //     (len * std::mem::size_of::<Complex>()) as u64,
+        // );
 
         queue.submit(Some(encoder.finish()));
        // queue.submit(None);
@@ -113,7 +122,7 @@ async fn main() {
         // // Since contents are got in bytes, this converts these bytes back to u32
          bytemuck::cast_slice(&data1).clone_into(&mut ans);
         
-        // println!("{:?}", &ans[..10]);
+         //println!("{:?}", &ans[..10]);
          //println!("{:?}", &ans[512..520]);
 
         // With the current interface, we have to make sure all mapped views are
