@@ -149,6 +149,7 @@ impl<'a> ComputeGraph<'a> {
         self.queue.submit(Some(encoder.finish()));
 
         self.nodes.last().map(|node| node.get_output_buffer())
+       
     }
 }
 

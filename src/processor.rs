@@ -123,14 +123,13 @@ impl<'a> Forward<'a> {
                 },
             ],
         });
-
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
             timestamp_writes: None,
         });
 
         cpass.set_pipeline(&self.pipeline);
-        cpass.set_bind_group(0, &bind_group_forward, &[]);
+        cpass.set_bind_group(0, &self.bind_group, &[]);
 
         let x = (self.fft_len / 2 / 512).max(1); //每个x对应一组fft运算
         //let x =self.data_len/self.fft_len;

@@ -5,12 +5,16 @@ edition = "2024"
 
 [dependencies]
 wgpu = "*"
+ndarray = "*"
+ndarray-conv = "*"
 bytemuck = { version = "*", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 num-complex = { version = "*", features = ["bytemuck"] }
 rustfft = "*"
 futures-intrusive = "0.5.0"
+rand = "0.9.1"
+approx = "0.5.1"
 
 [[example]]
 name = "basic"
