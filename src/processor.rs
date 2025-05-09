@@ -11,7 +11,7 @@ pub struct Forward<'a> {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
     pub buffer_a: &'a wgpu::Buffer,
-    buffer_b: wgpu::Buffer,
+    pub buffer_b: wgpu::Buffer,
     twiddle_buffer: wgpu::Buffer,
     //pub round_num: wgpu::Buffer,
     // pub fft_len_buf: wgpu::Buffer,
@@ -228,8 +228,8 @@ pub struct Inverse<'a> {
     queue: &'a wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
-    buffer_a: &'a wgpu::Buffer,
-    buffer_b: wgpu::Buffer,
+    pub buffer_a: &'a wgpu::Buffer,
+    pub buffer_b: wgpu::Buffer,
     // pub round_num: wgpu::Buffer,
     //pub fft_len_buf: wgpu::Buffer,
     pub fft_len: u32,
@@ -709,7 +709,7 @@ pub struct Multiply<'a> {
     //bind_group: wgpu::BindGroup,
     buffer_a: &'a wgpu::Buffer,
     buffer_b: &'a wgpu::Buffer,
-    result: wgpu::Buffer,
+    pub result:  wgpu::Buffer,
     // pub round_num: wgpu::Buffer,
     //pub fft_len_buf: wgpu::Buffer,
 }
@@ -764,7 +764,7 @@ impl<'a> Multiply<'a> {
            
             buffer_a,
             buffer_b,
-            result,
+            result
         }
     }
 
@@ -796,8 +796,9 @@ impl<'a> Multiply<'a> {
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &bind_group_multiply, &[]);
         let workgroup_len=64 ;
+        let total_elements = (self.buffer_a.size() / 8) as u32;
         let x = 1024/workgroup_len;
-        let y = (self.buffer_a.size() / 8 / 1024) as u32; //一个字节是8个bit
+        let y = ((total_elements + 1024 - 1) / 1024).max(1) ; //一个字节是8个bit
         let z = 1;
 
         // dbg!(self);

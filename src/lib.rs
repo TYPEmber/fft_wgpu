@@ -6,6 +6,8 @@ use wgpu::*;
 pub mod processor;
 pub use processor::*;
 pub mod wgpu_helper;
+pub mod compute_graph;
+pub use compute_graph::*;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]

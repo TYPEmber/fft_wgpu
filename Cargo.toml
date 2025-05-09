@@ -10,6 +10,7 @@ tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 num-complex = { version = "*", features = ["bytemuck"] }
 rustfft = "*"
+futures-intrusive = "0.5.0"
 
 [[example]]
 name = "basic"
@@ -34,3 +35,7 @@ path = "src/examples/conv.rs"
 [[example]]
 name = "convolution2"
 path = "src/examples/conv2.rs"
+
+[[example]]
+name = "graph"
+path = "src/examples/graph.rs"

@@ -32,7 +32,7 @@ async fn main() {
 
     let data = vec![Complex::new(1.0, 0.0); 512*500*5];
     let len = data.len();
-
+    
     // let mut data_cpu = data
     //     .iter()
     //     .map(|c| rustfft::num_complex::Complex::new(c.re, 0.0))
@@ -63,14 +63,14 @@ async fn main() {
             | wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
-
-    let fft_forward = fft_wgpu::Forward::new(&device, &queue, &src, 1024);
+    
+    let fft_forward = fft_wgpu::Forward::new(&device, &queue, &src, 512);
     // let fft_forward_2 = fft_wgpu::Forward::new(&device, &queue, &src, 16);
     let buffer_slice = staging_buffer.slice(..);
    
     let timer = std::time::Instant::now();
 
-    for _ in 0..1000 {
+   // for _ in 0..1000 {
         // queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
         queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
         // A command encoder executes one or many pipelines.
@@ -122,7 +122,7 @@ async fn main() {
         // // Since contents are got in bytes, this converts these bytes back to u32
          bytemuck::cast_slice(&data1).clone_into(&mut ans);
         
-         //println!("{:?}", &ans[..10]);
+         println!("{:?}", &ans[..10]);
          //println!("{:?}", &ans[512..520]);
 
         // With the current interface, we have to make sure all mapped views are
@@ -133,7 +133,7 @@ async fn main() {
         //   delete myPointer;
         //   myPointer = NULL;
         // It effectively frees the memory
-    }
+    //}
    
     dbg!(timer.elapsed());
     
