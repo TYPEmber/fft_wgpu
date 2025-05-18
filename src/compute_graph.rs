@@ -2,6 +2,10 @@ use crate::processor;
 use std::sync::Arc;
 use wgpu::util::DeviceExt; // Ensure this is in scope if used by your fft_wgpu lib
 //Trait for all compute graph nodes
+
+#[derive(Copy, Clone)]
+pub struct NodeHandle(usize);
+
 pub trait GraphNode<'a> {
     fn run(&self, encoder: &mut wgpu::CommandEncoder);
     // The returned buffer reference is now tied to the lifetime of `&self` in `get_output_buffer`
@@ -123,7 +127,11 @@ pub struct ComputeGraph<'a> {
 }
 
 impl<'a> ComputeGraph<'a> {
-    pub fn new(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>,nodes: Vec<Box<dyn GraphNode<'a> + 'a>>) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        nodes: Vec<Box<dyn GraphNode<'a> + 'a>>,
+    ) -> Self {
         Self {
             device,
             queue,
@@ -133,6 +141,45 @@ impl<'a> ComputeGraph<'a> {
 
     pub fn add_node(&mut self, node: Box<dyn GraphNode<'a> + 'a>) {
         self.nodes.push(node);
+    }
+
+    pub fn add_fft_node(&mut self, input_buffer: &'a wgpu::Buffer, fft_len: u32) -> NodeHandle {
+        let device_ref: &'a wgpu::Device = &*self.device;
+        let queue_ref: &'a wgpu::Queue = &*self.queue;
+
+        let node = FftNode::new(device_ref, queue_ref, input_buffer, fft_len);
+        self.nodes.push(Box::new(node));
+        NodeHandle(self.nodes.len() - 1)
+    }
+
+    // 添加乘法节点
+    pub fn add_multiply_node(&mut self, input1: NodeHandle, input2: NodeHandle) -> NodeHandle {
+        let node1 = &self.nodes[input1.0];
+        let node2 = &self.nodes[input2.0];
+        let buffer_a = node1.get_output_buffer();
+        let buffer_b = node2.get_output_buffer();
+        let node = MultiplyNode::new(
+            &self.device as &wgpu::Device,
+            &self.queue as &wgpu::Queue,
+            buffer_a,
+            buffer_b,
+        );
+        self.nodes.push(Box::new(node));
+        NodeHandle(self.nodes.len() - 1)
+    }
+
+    // 添加IFFT节点
+    pub fn add_ifft_node(&mut self, input: NodeHandle, fft_len: u32) -> NodeHandle {
+        let input_node = &self.nodes[input.0];
+        let input_buffer = input_node.get_output_buffer();
+        let node = IfftNode::new(
+            &self.device as &wgpu::Device,
+            &self.queue as &wgpu::Queue,
+            input_buffer,
+            fft_len,
+        );
+        self.nodes.push(Box::new(node));
+        NodeHandle(self.nodes.len() - 1)
     }
 
     pub fn execute_and_get_final_output(&self) -> Option<&wgpu::Buffer> {
@@ -149,10 +196,5 @@ impl<'a> ComputeGraph<'a> {
         self.queue.submit(Some(encoder.finish()));
 
         self.nodes.last().map(|node| node.get_output_buffer())
-       
     }
 }
-
-
-
-
