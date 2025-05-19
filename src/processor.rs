@@ -876,3 +876,157 @@ fn prepare_cs_model_multiply(device: &wgpu::Device) -> wgpu::ComputePipeline {
         cache: None,
     })
 }
+
+pub struct IntegratedMultiply<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    pipeline: wgpu::ComputePipeline,
+    //bind_group: wgpu::BindGroup,
+    buffer: &'a wgpu::Buffer,
+    pub result:  wgpu::Buffer,
+    pub fft_len: u32,
+    // pub round_num: wgpu::Buffer,
+    //pub fft_len_buf: wgpu::Buffer,
+}
+
+impl<'a> IntegratedMultiply<'a> {
+    pub fn new(
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        src: &'a wgpu::Buffer,
+        fft_len: u32,
+    ) -> Self {
+        let pipeline_integratedmultiply = prepare_cs_model_integratedmultiply(device);
+
+        let data_len = src.size() - (fft_len as u64 * 8);
+
+        let buffer = src;
+        let result = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: data_len,
+            usage: wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        // Instantiates the bind group, once again specifying the binding of buffers.
+        let bind_group_multiply = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline_integratedmultiply.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: result.as_entire_binding(),
+                },
+            ],
+        });
+
+        Self {
+            device,
+            queue,
+            pipeline: pipeline_integratedmultiply,
+            //bind_group: bind_group_multiply,
+            buffer,
+            result,
+            fft_len
+        }
+    }
+
+    pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
+        let bind_group_integratedmultiply = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.result.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+        compute_pass.set_pipeline(&self.pipeline);
+        compute_pass.set_bind_group(0, &bind_group_integratedmultiply, &[]);
+
+        let workgroup_len = 64;
+        let  data_len= self.buffer.size() / 8;
+        let x = 1024 / workgroup_len; //每个x对应一组fft运算
+        let y = (data_len / 1024) as u32; //一个data中有2个u32，一个u32有4个byte
+        let z = 1;
+        compute_pass.set_push_constants(0,&self.fft_len.to_le_bytes());
+        compute_pass.dispatch_workgroups(x, y, z);
+
+        &self.result
+    }
+}
+
+fn prepare_cs_model_integratedmultiply(device: &wgpu::Device) -> wgpu::ComputePipeline {
+    // Loads the shader from WGSL
+    let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+            "kernel/multiply2.wgsl"
+        ))),
+    });
+
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let ppl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[wgpu::PushConstantRange {
+            stages: wgpu::ShaderStages::COMPUTE,
+            range: 0..4,
+        }],
+    });
+
+     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(&ppl),
+        module: &cs_module,
+        entry_point: Some("main"),
+        compilation_options: wgpu::PipelineCompilationOptions {
+            zero_initialize_workgroup_memory: false,
+            ..Default::default()
+        },
+        cache: None,
+    })
+
+}
+

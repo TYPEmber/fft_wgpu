@@ -43,3 +43,7 @@ path = "src/examples/conv2.rs"
 [[example]]
 name = "graph"
 path = "src/examples/graph.rs"
+
+[[example]]
+name = "convolution3"
+path = "src/examples/conv3.rs"
