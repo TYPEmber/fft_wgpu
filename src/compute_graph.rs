@@ -198,3 +198,13 @@ impl<'a> ComputeGraph<'a> {
         self.nodes.last().map(|node| node.get_output_buffer())
     }
 }
+//process 一定在一个新的数组里，可变引用，不可变引用
+// process 把数据结果写到第一个buffer里，
+// 处理一遍数据之后再写到a里头，细节里面
+//计算图跨度有点大了，Rustfft，所有权概念冲突，返回值的结构，独占这一东西，执行算法写入，inplace，
+// create_buffer 放在process里头，input binding create buffer，input，binding ，plan fft forward 计算twiddle，
+//process，binding group，input长度没变就不用改，buffer-a是不是同一个，用原来的buffer，变了重新来一遍
+//inplace,outplace
+//重新封装，固定写到第一个input
+//cs-module,
+//planner,forward,proc 
