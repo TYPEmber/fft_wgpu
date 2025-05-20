@@ -8,6 +8,8 @@ pub use processor::*;
 pub mod wgpu_helper;
 pub mod compute_graph;
 pub use compute_graph::*;
+pub mod planner;
+pub use planner::*;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]

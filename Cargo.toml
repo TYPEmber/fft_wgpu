@@ -47,3 +47,7 @@ path = "src/examples/graph.rs"
 [[example]]
 name = "convolution3"
 path = "src/examples/conv3.rs"
+
+[[example]]
+name = "planner"
+path = "src/examples/try_planner.rs"
