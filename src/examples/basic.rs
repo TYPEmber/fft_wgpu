@@ -30,7 +30,7 @@ async fn main() {
         .await
         .unwrap();
 
-    let data = vec![Complex::new(1.0, 0.0); 512*500*5];
+    let data = vec![Complex::new(5.0, 0.0); 512*500*5];
     let len = data.len();
     
     // let mut data_cpu = data

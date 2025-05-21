@@ -256,13 +256,71 @@ impl<'a> ForwardFFT<'a> {
         // 当前容量适中，无需调整
     }
 
+
+    pub fn proc_inplace(&mut self, 
+                        encoder: & mut wgpu::CommandEncoder, 
+                        input_buffer: & wgpu::Buffer) {
+        
+        // 计算输入缓冲区的元素数量并确保临时缓冲区足够大
+        let element_count = (input_buffer.size() / 8) as usize;
+        self.ensure_buffer_capacity(element_count);
+        
+        // 动态创建绑定组
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.temp_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.twiddle_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+
+        cpass.set_pipeline(&self.pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+
+        // 计算工作组配置
+        let x = (self.fft_len / 2 / 512).max(1); 
+        let elements_count = input_buffer.size() / 8; // 每个复数8字节
+        let y = (elements_count / self.fft_len as u64) as u32;
+        let z = 1;
+
+        cpass.set_push_constants(0, &self.fft_len.to_le_bytes());
+        
+        for i in 0..(self.fft_len as f32).log2().round() as u32 {
+            cpass.set_push_constants(4, &i.to_le_bytes());
+            cpass.dispatch_workgroups(x, y, z);
+        }
+
+        // if ((self.fft_len as f32).log2().round() as usize) % 2 != 0 {
+        //     encoder.copy_buffer_to_buffer(&self.temp_buffer, 0, input_buffer, 0, input_buffer.size());
+        // }
+    }
+
+       
+      
+    
     /// 执行FFT计算，只需提供输入缓冲区，使用内部临时缓冲区
     pub fn proc<'b>(&'b mut self, 
                    encoder: &mut wgpu::CommandEncoder, 
                    input_buffer: &'b wgpu::Buffer) -> &'b wgpu::Buffer {
         
         // 计算输入缓冲区的元素数量并确保临时缓冲区足够大
-        let element_count = (input_buffer.size() / std::mem::size_of::<Complex<f32>>() as u64) as usize;
+        let element_count = (input_buffer.size() / 8) as usize;
         self.ensure_buffer_capacity(element_count);
         
         // 动态创建绑定组
@@ -585,7 +643,7 @@ impl<'a> MultiplyFFT<'a> {
         }
         // 当前容量适中，无需调整
     }
-
+    
     /// 执行复数乘法，只需提供输入缓冲区，使用内部结果缓冲区
     pub fn proc<'b>(&'b mut self, 
                    encoder: &mut wgpu::CommandEncoder, 
@@ -652,7 +710,7 @@ fn prepare_cs_model(device: &wgpu::Device) -> wgpu::ComputePipeline {
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-            "kernel/fft.wgsl"
+            "kernel/fft2.wgsl"
         ))),
     });
 

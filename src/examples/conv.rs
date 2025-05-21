@@ -59,8 +59,8 @@ async fn main() {
             | wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
-    let data_forward = fft_wgpu::Forward::new(&device, &queue, &data_src, 512);
-    let knl_forward = fft_wgpu::Forward::new(&device, &queue, &knl_src, 512);
+    let data_forward = fft_wgpu::Forward::new(&device, &queue, &data_src, 1024);
+    let knl_forward = fft_wgpu::Forward::new(&device, &queue, &knl_src, 1024);
     let buffer_slice = staging_buffer.slice(..);
 
     queue.write_buffer(&data_src, 0, bytemuck::cast_slice(data.as_slice()));
@@ -74,7 +74,7 @@ async fn main() {
     let multiply=fft_wgpu::Multiply::new(&device, &queue, data_output, knl_output);
     
     let result = multiply.proc(&mut encoder);
-    let fft_inverse = fft_wgpu::Inverse::new(&device, &queue, result, 512);
+    let fft_inverse = fft_wgpu::Inverse::new(&device, &queue, result, 1024);
     let output = fft_inverse.proc(&mut encoder);
     encoder.copy_buffer_to_buffer(output, 0, &staging_buffer, 0, (len * std::mem::size_of::<Complex>()) as u64);
     
