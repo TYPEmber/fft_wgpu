@@ -27,9 +27,10 @@ fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
     let J = 1u << stage;
     // 每个工作项处理一个蝶形运算
     let block_size = 2u * J;
+    let total_stages= u32(log2(f32(n)));
    // let shared_value = subgroupBroadcast(local_value, 0); 
     //let total_blocks = n / block_size;
-    let total_stages= u32(log2(f32(n)));
+
     let block_idx = idx / J;
     let j = idx % J;
 
@@ -53,14 +54,20 @@ fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
         let b = buffer_a[idx2];
         buffer_b[out_idx1] = a + b;
         buffer_b[out_idx2] = complex_mul(a - b, twiddle);
-        
+        if stage== total_stages - 1u {
+           buffer_a[idx1] = buffer_b[idx1];
+           buffer_a[idx2] = buffer_b[idx2];
+        }
     }
     else {
         let a = buffer_b[idx1];
         let b = buffer_b[idx2];
         buffer_a[out_idx1] = a + b;
         buffer_a[out_idx2] = complex_mul(a - b, twiddle);
+
     }
+   
+
 }
 //fn fft2(idx: u32, n: u32, offset: u32, stage: u32) {
     //let tid= idx % n;

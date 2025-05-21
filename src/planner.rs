@@ -82,18 +82,18 @@ impl FFTPlanner {
         })
     }
 
-    pub fn create_forward(&self, fft_len: u32) -> ForwardFFT {
-        ForwardFFT::new(&self.device, &self.queue, fft_len)
+     pub fn create_forward(&self, fft_len: u32, initial_capacity: usize) -> ForwardFFT {
+        ForwardFFT::new(&self.device, &self.queue, fft_len, initial_capacity)
     }
 
-    /// 创建逆向FFT计算器
-    pub fn create_inverse(&self, fft_len: u32) -> InverseFFT {
-        InverseFFT::new(&self.device, &self.queue, fft_len)
+    /// 创建具有初始缓冲区容量的逆向FFT计算器
+    pub fn create_inverse(&self, fft_len: u32, initial_capacity: usize) -> InverseFFT {
+        InverseFFT::new(&self.device, &self.queue, fft_len, initial_capacity)
     }
 
     /// 创建复数乘法计算器
-    pub fn create_multiply(&self) -> MultiplyFFT {
-        MultiplyFFT::new(&self.device, &self.queue)
+    pub fn create_multiply(&self, initial_capacity: usize) -> MultiplyFFT {
+        MultiplyFFT::new(&self.device, &self.queue, initial_capacity)
     }
     
     /// 创建命令编码器
@@ -146,18 +146,22 @@ impl FFTPlanner {
     }
 }
 
-/// 正向FFT计算器 - 与具体缓冲区解耦
+/// 正向FFT计算器 - 内部管理临时缓冲区
 pub struct ForwardFFT<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
-    twiddle_buffer: wgpu::Buffer,  // 旋转因子缓冲区保留在结构体中
+    twiddle_buffer: wgpu::Buffer,       // 旋转因子缓冲区
+    temp_buffer: wgpu::Buffer,          // 内部临时缓冲区
     fft_len: u32,
-    twiddles: Vec<Complex<f32>>,   // 保存CPU端的旋转因子，以便需要时重用
+    twiddles: Vec<Complex<f32>>,        // 保存CPU端的旋转因子
+    current_capacity: usize,            // 当前临时缓冲区容量
+    shrink_threshold: f32,              // 收缩阈值因子（如：4.0表示当容量>所需的4倍时收缩）
+    min_capacity: usize,                // 最小容量，避免频繁调整很小的缓冲区
 }
 
 impl<'a> ForwardFFT<'a> {
-    pub fn new(device: &'a wgpu::Device, queue: &'a wgpu::Queue, fft_len: u32) -> Self {
+    pub fn new(device: &'a wgpu::Device, queue: &'a wgpu::Queue, fft_len: u32, initial_capacity: usize) -> Self {
         let pipeline = prepare_cs_model(device);
         
         // 创建旋转因子 - 这部分与具体输入数据无关，只与FFT长度有关
@@ -174,24 +178,94 @@ impl<'a> ForwardFFT<'a> {
             contents: bytemuck::cast_slice(&twiddles),
             usage: wgpu::BufferUsages::STORAGE,
         });
+        
+        // 创建初始临时缓冲区
+        let temp_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("FFT Temp Buffer"),
+            size: (initial_capacity * std::mem::size_of::<Complex<f32>>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         Self {
             device,
             queue,
             pipeline,
             twiddle_buffer,
+            temp_buffer,
             fft_len,
             twiddles,
+            current_capacity: initial_capacity,
+            shrink_threshold: 4.0,      // 默认阈值：当容量超过所需的4倍时收缩
+            min_capacity: 1024,         // 默认最小容量：1024个元素
         }
     }
 
-    /// 执行FFT计算，传入输入缓冲区和一个可以接收输出的缓冲区
-    pub fn proc<'b>(&self, 
-                encoder: &mut wgpu::CommandEncoder, 
-                input_buffer: &'b wgpu::Buffer, 
-                output_buffer: &'b wgpu::Buffer) -> &'b wgpu::Buffer {
+    /// 设置收缩阈值
+    pub fn set_shrink_threshold(&mut self, threshold: f32) {
+        if threshold >= 1.0 {
+            self.shrink_threshold = threshold;
+        }
+    }
+
+    /// 设置最小容量
+    pub fn set_min_capacity(&mut self, capacity: usize) {
+        self.min_capacity = capacity;
+    }
+
+    /// 确保临时缓冲区容量足够，带收缩阈值
+    fn ensure_buffer_capacity(&mut self, required_capacity: usize) {
+        // 首先确保不低于最小容量
+        let required_capacity = required_capacity.max(self.min_capacity);
         
-        // 每次执行时动态创建绑定组
+        // 需要扩容
+        if self.current_capacity < required_capacity {
+            // 创建新的更大缓冲区，适当增加额外容量避免频繁调整
+            let new_capacity = (required_capacity as f32 * 1.2) as usize; // 增加20%的余量
+            
+            self.temp_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("FFT Temp Buffer (Resized)"),
+                size: (new_capacity * std::mem::size_of::<Complex<f32>>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.current_capacity = new_capacity;
+            
+            // 调试信息
+            println!("FFT缓冲区扩容: {} -> {}", required_capacity, new_capacity);
+        }
+        // 需要收缩
+        else if self.current_capacity > (required_capacity as f32 * self.shrink_threshold) as usize {
+            // 避免收缩到过小的容量
+            if required_capacity >= self.min_capacity {
+                // 收缩时添加少量余量
+                let new_capacity = (required_capacity as f32 * 1.1) as usize; // 增加10%的余量
+                
+                self.temp_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("FFT Temp Buffer (Shrunk)"),
+                    size: (new_capacity * std::mem::size_of::<Complex<f32>>()) as u64,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.current_capacity = new_capacity;
+                
+                // 调试信息
+                println!("FFT缓冲区收缩: {} -> {}", self.current_capacity, new_capacity);
+            }
+        }
+        // 当前容量适中，无需调整
+    }
+
+    /// 执行FFT计算，只需提供输入缓冲区，使用内部临时缓冲区
+    pub fn proc<'b>(&'b mut self, 
+                   encoder: &mut wgpu::CommandEncoder, 
+                   input_buffer: &'b wgpu::Buffer) -> &'b wgpu::Buffer {
+        
+        // 计算输入缓冲区的元素数量并确保临时缓冲区足够大
+        let element_count = (input_buffer.size() / std::mem::size_of::<Complex<f32>>() as u64) as usize;
+        self.ensure_buffer_capacity(element_count);
+        
+        // 动态创建绑定组
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.pipeline.get_bind_group_layout(0),
@@ -202,7 +276,7 @@ impl<'a> ForwardFFT<'a> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: output_buffer.as_entire_binding(),
+                    resource: self.temp_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -219,8 +293,8 @@ impl<'a> ForwardFFT<'a> {
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
 
-        // 使用基于FFT长度的工作组配置
-        let x = (self.fft_len / 2 / 512).max(1); // 每个x对应一组fft运算
+        // 计算工作组配置
+        let x = (self.fft_len / 2 / 512).max(1); 
         let elements_count = input_buffer.size() / 8; // 每个复数8字节
         let y = (elements_count / self.fft_len as u64) as u32;
         let z = 1;
@@ -236,7 +310,7 @@ impl<'a> ForwardFFT<'a> {
         if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
             input_buffer
         } else {
-            output_buffer
+            &self.temp_buffer
         }
     }
     
@@ -249,33 +323,117 @@ impl<'a> ForwardFFT<'a> {
     pub fn twiddles(&self) -> &[Complex<f32>] {
         &self.twiddles
     }
+    
+    /// 获取内部临时缓冲区引用
+    pub fn temp_buffer(&self) -> &wgpu::Buffer {
+        &self.temp_buffer
+    }
+    
+    /// 获取当前缓冲区容量
+    pub fn current_capacity(&self) -> usize {
+        self.current_capacity
+    }
 }
 
-/// 逆向FFT计算器 - 与具体缓冲区解耦
+/// 逆向FFT计算器 - 内部管理临时缓冲区
 pub struct InverseFFT<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
+    temp_buffer: wgpu::Buffer,          // 内部临时缓冲区
     fft_len: u32,
+    current_capacity: usize,            // 当前临时缓冲区容量
+    shrink_threshold: f32,              // 收缩阈值因子
+    min_capacity: usize,                // 最小容量
 }
 
 impl<'a> InverseFFT<'a> {
-    pub fn new(device: &'a wgpu::Device, queue: &'a wgpu::Queue, fft_len: u32) -> Self {
+    pub fn new(device: &'a wgpu::Device, queue: &'a wgpu::Queue, fft_len: u32, initial_capacity: usize) -> Self {
         let pipeline = prepare_cs_model_inverse(device);
+        
+        // 创建初始临时缓冲区
+        let temp_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("IFFT Temp Buffer"),
+            size: (initial_capacity * std::mem::size_of::<Complex<f32>>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         Self {
             device,
             queue,
             pipeline,
+            temp_buffer,
             fft_len,
+            current_capacity: initial_capacity,
+            shrink_threshold: 4.0,      // 默认阈值
+            min_capacity: 1024,         // 默认最小容量
+        }
+    }
+    
+    /// 设置收缩阈值
+    pub fn set_shrink_threshold(&mut self, threshold: f32) {
+        if threshold >= 1.0 {
+            self.shrink_threshold = threshold;
         }
     }
 
-    /// 执行IFFT计算，传入输入缓冲区和输出缓冲区
-    pub fn proc<'b>(&self, 
-                encoder: &mut wgpu::CommandEncoder, 
-                input_buffer: &'b wgpu::Buffer, 
-                output_buffer: &'b wgpu::Buffer) -> &'b wgpu::Buffer {
+    /// 设置最小容量
+    pub fn set_min_capacity(&mut self, capacity: usize) {
+        self.min_capacity = capacity;
+    }
+    
+    /// 确保临时缓冲区容量足够，带收缩阈值
+    fn ensure_buffer_capacity(&mut self, required_capacity: usize) {
+        // 首先确保不低于最小容量
+        let required_capacity = required_capacity.max(self.min_capacity);
+        
+        // 需要扩容
+        if self.current_capacity < required_capacity {
+            // 创建新的更大缓冲区，适当增加额外容量避免频繁调整
+            let new_capacity = (required_capacity as f32 * 1.2) as usize; // 增加20%的余量
+            
+            self.temp_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("IFFT Temp Buffer (Resized)"),
+                size: (new_capacity * std::mem::size_of::<Complex<f32>>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.current_capacity = new_capacity;
+            
+            // 调试信息
+            println!("IFFT缓冲区扩容: {} -> {}", required_capacity, new_capacity);
+        }
+        // 需要收缩
+        else if self.current_capacity > (required_capacity as f32 * self.shrink_threshold) as usize {
+            // 避免收缩到过小的容量
+            if required_capacity >= self.min_capacity {
+                // 收缩时添加少量余量
+                let new_capacity = (required_capacity as f32 * 1.1) as usize; // 增加10%的余量
+                
+                self.temp_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("IFFT Temp Buffer (Shrunk)"),
+                    size: (new_capacity * std::mem::size_of::<Complex<f32>>()) as u64,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.current_capacity = new_capacity;
+                
+                // 调试信息
+                println!("IFFT缓冲区收缩: {} -> {}", self.current_capacity, new_capacity);
+            }
+        }
+        // 当前容量适中，无需调整
+    }
+
+    /// 执行IFFT计算，只需提供输入缓冲区，使用内部临时缓冲区
+    pub fn proc<'b>(&'b mut self, 
+                   encoder: &mut wgpu::CommandEncoder, 
+                   input_buffer: &'b wgpu::Buffer) -> &'b wgpu::Buffer {
+        
+        // 计算输入缓冲区的元素数量并确保临时缓冲区足够大
+        let element_count = (input_buffer.size() / std::mem::size_of::<Complex<f32>>() as u64) as usize;
+        self.ensure_buffer_capacity(element_count);
         
         // 动态创建绑定组
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -288,7 +446,7 @@ impl<'a> InverseFFT<'a> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: output_buffer.as_entire_binding(),
+                    resource: self.temp_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -319,7 +477,7 @@ impl<'a> InverseFFT<'a> {
         if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
             input_buffer
         } else {
-            output_buffer
+            &self.temp_buffer
         }
     }
     
@@ -327,32 +485,116 @@ impl<'a> InverseFFT<'a> {
     pub fn fft_len(&self) -> u32 {
         self.fft_len
     }
+    
+    /// 获取内部临时缓冲区引用
+    pub fn temp_buffer(&self) -> &wgpu::Buffer {
+        &self.temp_buffer
+    }
+    
+    /// 获取当前缓冲区容量
+    pub fn current_capacity(&self) -> usize {
+        self.current_capacity
+    }
 }
 
-/// 复数乘法计算器 - 与具体缓冲区解耦
+/// 复数乘法计算器 - 内部管理结果缓冲区
 pub struct MultiplyFFT<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
+    result_buffer: wgpu::Buffer,        // 内部结果缓冲区
+    current_capacity: usize,            // 当前缓冲区容量
+    shrink_threshold: f32,              // 收缩阈值因子
+    min_capacity: usize,                // 最小容量
 }
 
 impl<'a> MultiplyFFT<'a> {
-    pub fn new(device: &'a wgpu::Device, queue: &'a wgpu::Queue) -> Self {
+    pub fn new(device: &'a wgpu::Device, queue: &'a wgpu::Queue, initial_capacity: usize) -> Self {
         let pipeline = prepare_cs_model_multiply(device);
+        
+        // 创建初始结果缓冲区
+        let result_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Multiply Result Buffer"),
+            size: (initial_capacity * std::mem::size_of::<Complex<f32>>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         Self {
             device,
             queue,
             pipeline,
+            result_buffer,
+            current_capacity: initial_capacity,
+            shrink_threshold: 4.0,      // 默认阈值
+            min_capacity: 1024,         // 默认最小容量
+        }
+    }
+    
+    /// 设置收缩阈值
+    pub fn set_shrink_threshold(&mut self, threshold: f32) {
+        if threshold >= 1.0 {
+            self.shrink_threshold = threshold;
         }
     }
 
-    /// 执行复数乘法，传入两个输入缓冲区和一个输出缓冲区
-    pub fn proc<'b>(&self, 
-                encoder: &mut wgpu::CommandEncoder, 
-                buffer_a: &wgpu::Buffer, 
-                buffer_b: &wgpu::Buffer,
-                result_buffer: &'b wgpu::Buffer) -> &'b wgpu::Buffer {
+    /// 设置最小容量
+    pub fn set_min_capacity(&mut self, capacity: usize) {
+        self.min_capacity = capacity;
+    }
+    
+    /// 确保结果缓冲区容量足够，带收缩阈值
+    fn ensure_buffer_capacity(&mut self, required_capacity: usize) {
+        // 首先确保不低于最小容量
+        let required_capacity = required_capacity.max(self.min_capacity);
+        
+        // 需要扩容
+        if self.current_capacity < required_capacity {
+            // 创建新的更大缓冲区，适当增加额外容量避免频繁调整
+            let new_capacity = (required_capacity as f32 * 1.2) as usize; // 增加20%的余量
+            
+            self.result_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Multiply Result Buffer (Resized)"),
+                size: (new_capacity * std::mem::size_of::<Complex<f32>>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.current_capacity = new_capacity;
+            
+            // 调试信息
+            println!("乘法缓冲区扩容: {} -> {}", required_capacity, new_capacity);
+        }
+        // 需要收缩
+        else if self.current_capacity > (required_capacity as f32 * self.shrink_threshold) as usize {
+            // 避免收缩到过小的容量
+            if required_capacity >= self.min_capacity {
+                // 收缩时添加少量余量
+                let new_capacity = (required_capacity as f32 * 1.1) as usize; // 增加10%的余量
+                
+                self.result_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Multiply Result Buffer (Shrunk)"),
+                    size: (new_capacity * std::mem::size_of::<Complex<f32>>()) as u64,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.current_capacity = new_capacity;
+                
+                // 调试信息
+                println!("乘法缓冲区收缩: {} -> {}", self.current_capacity, new_capacity);
+            }
+        }
+        // 当前容量适中，无需调整
+    }
+
+    /// 执行复数乘法，只需提供输入缓冲区，使用内部结果缓冲区
+    pub fn proc<'b>(&'b mut self, 
+                   encoder: &mut wgpu::CommandEncoder, 
+                   buffer_a: &'b wgpu::Buffer, 
+                   buffer_b: &'b wgpu::Buffer) -> &'b wgpu::Buffer {
+        
+        // 计算输入缓冲区的元素数量并确保结果缓冲区足够大
+        let element_count = (buffer_a.size() / std::mem::size_of::<Complex<f32>>() as u64) as usize;
+        self.ensure_buffer_capacity(element_count);
         
         // 动态创建绑定组
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -369,7 +611,7 @@ impl<'a> MultiplyFFT<'a> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: result_buffer.as_entire_binding(),
+                    resource: self.result_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -390,11 +632,21 @@ impl<'a> MultiplyFFT<'a> {
 
         cpass.dispatch_workgroups(x, y, z);
 
-        result_buffer
+        &self.result_buffer
+    }
+    
+    /// 获取内部结果缓冲区引用
+    pub fn result_buffer(&self) -> &wgpu::Buffer {
+        &self.result_buffer
+    }
+    
+    /// 获取当前缓冲区容量
+    pub fn current_capacity(&self) -> usize {
+        self.current_capacity
     }
 }
 
-// 着色器编译函数保持不变
+// 保留原始的着色器编译函数
 fn prepare_cs_model(device: &wgpu::Device) -> wgpu::ComputePipeline {
     // 加载WGSL着色器
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -465,10 +717,9 @@ fn prepare_cs_model(device: &wgpu::Device) -> wgpu::ComputePipeline {
     })
 }
 
-// 其他着色器编译函数同样保持不变
+// 其他着色器编译函数实现同样保留
 fn prepare_cs_model_inverse(device: &wgpu::Device) -> wgpu::ComputePipeline {
-    // 实现与之前相同
-    // ...
+    // 实现与之前相同...
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
@@ -525,8 +776,7 @@ fn prepare_cs_model_inverse(device: &wgpu::Device) -> wgpu::ComputePipeline {
 }
 
 fn prepare_cs_model_multiply(device: &wgpu::Device) -> wgpu::ComputePipeline {
-    // 实现与之前相同
-    // ...
+    // 实现与之前相同...
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
@@ -588,3 +838,4 @@ fn prepare_cs_model_multiply(device: &wgpu::Device) -> wgpu::ComputePipeline {
         cache: None,
     })
 }
+
