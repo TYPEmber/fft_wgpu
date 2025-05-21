@@ -135,15 +135,7 @@ impl FFTPlanner {
         result
     }
     
-    /// 获取设备引用
-    pub fn device(&self) -> &wgpu::Device {
-        &self.device
-    }
-    
-    /// 获取队列引用
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
-    }
+
 }
 
 /// 正向FFT计算器 - 内部管理临时缓冲区
@@ -221,7 +213,7 @@ impl<'a> ForwardFFT<'a> {
         // 需要扩容
         if self.current_capacity < required_capacity {
             // 创建新的更大缓冲区，适当增加额外容量避免频繁调整
-            let new_capacity = (required_capacity as f32 * 1.2) as usize; // 增加20%的余量
+            let new_capacity = (required_capacity as f32 * 1.0) as usize; 
             
             self.temp_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("FFT Temp Buffer (Resized)"),
@@ -239,7 +231,7 @@ impl<'a> ForwardFFT<'a> {
             // 避免收缩到过小的容量
             if required_capacity >= self.min_capacity {
                 // 收缩时添加少量余量
-                let new_capacity = (required_capacity as f32 * 1.1) as usize; // 增加10%的余量
+                let new_capacity = (required_capacity as f32 * 1.0) as usize; 
                 
                 self.temp_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("FFT Temp Buffer (Shrunk)"),
@@ -449,7 +441,7 @@ impl<'a> InverseFFT<'a> {
         // 需要扩容
         if self.current_capacity < required_capacity {
             // 创建新的更大缓冲区，适当增加额外容量避免频繁调整
-            let new_capacity = (required_capacity as f32 * 1.2) as usize; // 增加20%的余量
+            let new_capacity = (required_capacity as f32 * 1.0) as usize; 
             
             self.temp_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("IFFT Temp Buffer (Resized)"),
@@ -467,7 +459,7 @@ impl<'a> InverseFFT<'a> {
             // 避免收缩到过小的容量
             if required_capacity >= self.min_capacity {
                 // 收缩时添加少量余量
-                let new_capacity = (required_capacity as f32 * 1.1) as usize; // 增加10%的余量
+                let new_capacity = (required_capacity as f32 * 1.0) as usize; // 增加10%的余量
                 
                 self.temp_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("IFFT Temp Buffer (Shrunk)"),
