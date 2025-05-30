@@ -51,3 +51,16 @@ path = "src/examples/conv3.rs"
 [[example]]
 name = "planner"
 path = "src/examples/try_planner.rs"
+
+[[example]]
+name = "copy"
+path = "src/examples/try_copy.rs"
+
+[[example]]
+name = "copy_knl"
+path = "src/examples/try_copy_knl.rs"
+
+[[example]]
+name = "cly_tky"
+path = "src/examples/cly_tky.rs"
+

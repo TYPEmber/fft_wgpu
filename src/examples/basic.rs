@@ -3,7 +3,13 @@ use num_complex::Complex32 as Complex;
 #[tokio::main]
 async fn main() {
     // Instantiates instance of WebGPU
-    let instance = wgpu::Instance::default();
+     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    backends: wgpu::Backends::VULKAN,         //默认后端（着色器等）
+    //默认dx12编译器
+    flags: wgpu::InstanceFlags::empty(),      //没有额外的标志，行为
+    
+    backend_options: Default::default(),
+    });
     // `request_adapter` instantiates the general connection to the GPU
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -57,7 +63,7 @@ async fn main() {
 
     let src = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: (len * std::mem::size_of::<Complex>()) as u64,
+        size: (len * std::mem::size_of::<Complex>()) as u64, 
         usage: wgpu::BufferUsages::COPY_DST
             | wgpu::BufferUsages::COPY_SRC
             | wgpu::BufferUsages::STORAGE,
@@ -70,9 +76,21 @@ async fn main() {
    
     let timer = std::time::Instant::now();
 
-   // for _ in 0..1000 {
-        // queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
-        queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
+    for _ in 0..1000 {
+         queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
+      //  queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
+      
+        // let mut view = queue
+        //     .write_buffer_with(
+        //         &src,
+        //         0,
+        //         std::num::NonZero::new((len * std::mem::size_of::<Complex>()) as u64).unwrap(),
+        //     )
+        //     .unwrap();
+        // view.copy_from_slice(bytemuck::cast_slice(data.as_slice()));
+
+       // drop(view);
+
         // A command encoder executes one or many pipelines.
         // It is to WebGPU what a command buffer is to Vulkan.
          let mut encoder =
@@ -120,9 +138,10 @@ async fn main() {
        
        
         // // Since contents are got in bytes, this converts these bytes back to u32
-         bytemuck::cast_slice(&data1).clone_into(&mut ans);
+        // bytemuck::cast_slice(&data1).clone_into(&mut ans);
+         ans.copy_from_slice(bytemuck::cast_slice(&data1));
         
-         println!("{:?}", &ans[..10]);
+        // println!("{:?}", &ans[..10]);
          //println!("{:?}", &ans[512..520]);
 
         // With the current interface, we have to make sure all mapped views are
@@ -133,7 +152,7 @@ async fn main() {
         //   delete myPointer;
         //   myPointer = NULL;
         // It effectively frees the memory
-    //}
+    }
    
     dbg!(timer.elapsed());
     
@@ -207,12 +226,12 @@ async fn test_fft() {
         mapped_at_creation: false,
     });
 
-    let fft_forward = fft_wgpu::Forward::new(&device, &queue, &src, 16);
+    let fft_forward = fft_wgpu::Forward::new(&device, &queue, &src, 512);
     // let fft_forward_2 = fft_wgpu::Forward::new(&device, &queue, &src, 16);
 
     let timer = std::time::Instant::now();
 
-    for _ in 0..10 {
+    for _ in 0..1000 {
         queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
         // A command encoder executes one or many pipelines.
         // It is to WebGPU what a command buffer is to Vulkan.
@@ -220,17 +239,17 @@ async fn test_fft() {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
        // let _output = fft_forward.proc(&mut encoder);
-        let  output= fft_forward.proc(&mut encoder);
-        // let output = fft_forward.proc(&mut encoder);
-        //let output = fft_forward_2.proc(&mut encoder);
+        // let  output= fft_forward.proc(&mut encoder);
+        // // let output = fft_forward.proc(&mut encoder);
+        // //let output = fft_forward_2.proc(&mut encoder);
 
-        encoder.copy_buffer_to_buffer(
-            output,
-            0,
-            &staging_buffer,
-            0,
-            (len * std::mem::size_of::<Complex>()) as u64,
-        );
+        // encoder.copy_buffer_to_buffer(
+        //     output,
+        //     0,
+        //     &staging_buffer,
+        //     0,
+        //     (len * std::mem::size_of::<Complex>()) as u64,
+        // );
 
         queue.submit(Some(encoder.finish()));
 
@@ -244,31 +263,32 @@ async fn test_fft() {
         // fft_forward.round_num.unmap();
 
         // Note that we're not calling `.await` here.
-        let buffer_slice = staging_buffer.slice(..);
+        // let buffer_slice = staging_buffer.slice(..);
 
-        buffer_slice.map_async(wgpu::MapMode::Read, move |_| {});
+        // buffer_slice.map_async(wgpu::MapMode::Read, move |_| {});
 
         device.poll(wgpu::Maintain::wait()).panic_on_timeout();
 
         // Gets contents of buffer
-        let data = buffer_slice.get_mapped_range();
+    //     let data = buffer_slice.get_mapped_range();
 
-        // // Since contents are got in bytes, this converts these bytes back to u32
-        bytemuck::cast_slice(&data).clone_into(&mut ans);
+    //     // // Since contents are got in bytes, this converts these bytes back to u32
+    //    // bytemuck::cast_slice(&data).clone_into(&mut ans);
+    //     ans.copy_from_slice(bytemuck::cast_slice(&data));
+    //     println!("{:?}", &ans[..16]);
 
-        println!("{:?}", &ans[..16]);
-
-        // With the current interface, we have to make sure all mapped views are
-        // dropped before we unmap the buffer.
-        drop(data);
-        staging_buffer.unmap(); // Unmaps buffer from memory
+    //     // With the current interface, we have to make sure all mapped views are
+    //     // dropped before we unmap the buffer.
+    //     drop(data);
+    //     staging_buffer.unmap(); // Unmaps buffer from memory
         // If you are familiar with C++ these 2 lines can be thought of similarly to:
         //   delete myPointer;
         //   myPointer = NULL;
         // It effectively frees the memory
     }
+    //device.poll(wgpu::Maintain::wait()).panic_on_timeout();
     dbg!(timer.elapsed());
-
+    
 }
 }
 

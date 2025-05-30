@@ -131,7 +131,7 @@ impl<'a> Forward<'a> {
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &self.bind_group, &[]);
 
-        let x = (self.fft_len / 2 / 512).max(1); //每个x对应一组fft运算
+        let x = (self.fft_len / 2 / 64).max(1); //每个x对应一组fft运算
         //let x =self.data_len/self.fft_len;
         let y = (self.buffer_a.size() / 8 / self.fft_len as u64) as u32; //一个data中有2个u32，一个u32有4个byte
         //let y=1;

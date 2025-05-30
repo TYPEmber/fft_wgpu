@@ -43,11 +43,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 处理大数据
        // println!("\n处理大数据 ({}个元素)：", data_size);
        // println!("初始容量: {}", forward_fft.current_capacity());
-        
+     //  let kernel_freq = forward_fft.proc(&mut encoder, &kernel_buffer);
         forward_fft.proc_inplace(&mut encoder, & data_buffer);
        
         forward_fft.proc_inplace(&mut encoder, & kernel_buffer);
-      //  let kernel_freq = forward_fft.proc(&mut encoder, &kernel_buffer);
+        
         let product_freq = multiply.proc(&mut encoder, &data_buffer, &kernel_buffer);
         let result = inverse_fft.proc(&mut encoder, product_freq);
         encoder.copy_buffer_to_buffer(
