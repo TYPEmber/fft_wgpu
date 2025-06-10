@@ -78,31 +78,32 @@ async fn main() {
 
     for _ in 0..1000 {
          queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
-      //  queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
+    //    queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
       
-        // let mut view = queue
-        //     .write_buffer_with(
-        //         &src,
-        //         0,
-        //         std::num::NonZero::new((len * std::mem::size_of::<Complex>()) as u64).unwrap(),
-        //     )
-        //     .unwrap();
-        // view.copy_from_slice(bytemuck::cast_slice(data.as_slice()));
+    //     let mut view = queue
+    //         .write_buffer_with(
+    //             &src,
+    //             0,
+    //             std::num::NonZero::new((len * std::mem::size_of::<Complex>()) as u64).unwrap(),
+    //         )
+    //         .unwrap();
+    //     view.copy_from_slice(bytemuck::cast_slice(data.as_slice()));
 
-       // drop(view);
+    //    drop(view);
 
         // A command encoder executes one or many pipelines.
         // It is to WebGPU what a command buffer is to Vulkan.
          let mut encoder =
           device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        let output = fft_forward.proc(&mut encoder);
-        //let output=fft_forward.buffer_a;
+       // let output = fft_forward.proc(&mut encoder);
+        let output=&fft_forward.buffer_b;
          //let output = fft_forward.proc(&mut encoder);
         //let output = fft_forward_2.proc(&mut encoder);
         
         encoder.copy_buffer_to_buffer(
             output,
+            //&src,
             0,
             &staging_buffer,
             0,

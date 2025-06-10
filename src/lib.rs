@@ -10,6 +10,8 @@ pub mod compute_graph;
 pub use compute_graph::*;
 pub mod planner;
 pub use planner::*;
+pub mod segmented_transfer;
+pub use segmented_transfer::SegmentedTransfer;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]

@@ -68,7 +68,7 @@ async fn main() {
     let timer = std::time::Instant::now();
    
     for _ in 0..1000 {
-        // queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
+         queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
       
         // A command encoder executes one or many pipelines.
         // It is to WebGPU what a command buffer is to Vulkan.

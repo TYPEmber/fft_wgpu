@@ -64,3 +64,6 @@ path = "src/examples/try_copy_knl.rs"
 name = "cly_tky"
 path = "src/examples/cly_tky.rs"
 
+[[example]]
+name = "transfer"
+path = "src/examples/transfer.rs"

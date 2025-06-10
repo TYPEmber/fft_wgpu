@@ -105,24 +105,24 @@ impl<'a> Forward<'a> {
     }
 
     pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
-        let bind_group_forward = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.buffer_a.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.buffer_b.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.twiddle_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        // let bind_group_forward = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label: None,
+        //     layout: &self.pipeline.get_bind_group_layout(0),
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: self.buffer_a.as_entire_binding(),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: self.buffer_b.as_entire_binding(),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 2,
+        //             resource: self.twiddle_buffer.as_entire_binding(),
+        //         },
+        //     ],
+        // });
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
             timestamp_writes: None,
