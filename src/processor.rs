@@ -145,7 +145,6 @@ impl<'a> Forward<'a> {
             cpass.set_push_constants(4, &i.to_le_bytes());
             cpass.dispatch_workgroups(x, y, z);
         }
-
         if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
             self.buffer_a
         } else {
@@ -159,7 +158,7 @@ fn prepare_cs_model(device: &wgpu::Device) -> wgpu::ComputePipeline {
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-            "kernel/fft.wgsl"
+            "kernel/fftct.wgsl"
         ))),
     });
 
@@ -1030,3 +1029,303 @@ fn prepare_cs_model_integratedmultiply(device: &wgpu::Device) -> wgpu::ComputePi
 
 }
 
+use std::borrow::Cow;
+use num_complex::Complex32;
+//use wgpu::util::DeviceExt;
+
+/// 张量转置处理器
+/// 
+/// 专门用于GPU上执行张量的循环右移转置操作。
+/// 每个处理器实例维护自己的维度信息和转置逻辑，
+/// 持有输入缓冲区的引用并内部创建输出缓冲区。
+pub struct TransposeProcessor<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    pipeline: wgpu::ComputePipeline,
+    bind_group: wgpu::BindGroup,
+    
+    // 维度信息
+    dims: Vec<u32>,
+    output_dims: Vec<u32>,  // 转置后的维度
+   
+    total_elements: usize,
+    
+    // 缓冲区
+    input_buffer: &'a wgpu::Buffer,
+    pub output_buffer: wgpu::Buffer,   // 内部创建的输出缓冲区
+    dims_buffer: wgpu::Buffer,
+    strides_buffer: wgpu::Buffer,
+}
+
+impl<'a> TransposeProcessor<'a> {
+    /// 创建新的转置处理器
+    /// 
+    /// # 参数
+    /// * `device` - WGPU设备引用
+    /// * `queue` - WGPU队列引用
+    /// * `input_buffer` - 输入数据缓冲区引用
+    /// * `dims` - 输入张量的维度
+    /// 
+    /// # 返回
+    /// 新的TransposeProcessor实例
+    pub fn new(
+        device: &'a wgpu::Device,
+        queue: &'a wgpu::Queue,
+        input_buffer: &'a wgpu::Buffer,
+        dims: &[u32],
+    ) -> Self {
+        let rank = dims.len();
+        assert!(rank > 0, "张量维度不能为空");
+        
+        let total_elements = dims.iter().product::<u32>() as usize;
+        let buffer_size=input_buffer.size();
+        
+        // 内部创建输出缓冲区
+        let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Transpose Output Buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        
+        // 计算转置信息
+        let (output_dims, strides_t_r) = Self::calculate_transpose_info(dims);
+        
+        // 创建维度缓冲区
+        let dims_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Transpose Dims Buffer"),
+            contents: bytemuck::cast_slice(dims),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        
+        // 创建步长缓冲区
+        let strides_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Transpose Strides Buffer"),
+            contents: bytemuck::cast_slice(&strides_t_r),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        
+        // 创建绑定组布局
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Transpose Bind Group Layout"),
+            entries: &[
+                // 输入数据
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 输出数据
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 形状数据
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 步长数据
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        
+        // 创建计算管道
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Transpose Compute Pipeline"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Transpose Pipeline Layout"),
+                    bind_group_layouts: &[&bind_group_layout],
+                    push_constant_ranges: &[],
+                }),
+            ),
+            module: &device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Tensor Transpose Shader"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("kernel/transpose_nd.wgsl"))),
+            }),
+            entry_point: Some("main"),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                zero_initialize_workgroup_memory: false,
+                ..Default::default()
+            },
+            cache: None,
+        });
+        
+        // 创建绑定组
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Transpose Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: output_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: dims_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: strides_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        
+        Self {
+            device,
+            queue,
+            pipeline,
+            bind_group,
+            dims: dims.to_vec(),
+            output_dims,
+            total_elements,
+            input_buffer,
+            output_buffer,
+            dims_buffer,
+            strides_buffer,
+        }
+    }
+    
+    /// 执行转置操作
+    /// 
+    /// # 参数
+    /// * `encoder` - 命令编码器
+    /// 
+    /// # 返回
+    /// 输出缓冲区的引用
+    pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
+        // 创建计算通道
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("Transpose Compute Pass"),
+            timestamp_writes: None,
+        });
+        
+        compute_pass.set_pipeline(&self.pipeline);
+        compute_pass.set_bind_group(0, &self.bind_group, &[]);
+        
+        // 计算工作组数量 (每个工作组64个线程)
+        let workgroup_count = (self.total_elements as u32 + 63) / 64;
+        compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
+        
+        // 返回输出缓冲区
+        &self.output_buffer
+    }
+    
+    /// 更新输入缓冲区（在流水线处理中可能需要）
+    /// 
+    /// # 参数
+    /// * `new_input_buffer` - 新的输入缓冲区引用
+    /// 
+    /// # 返回
+    /// 更新了绑定组的自身引用
+    pub fn update_input_buffer(&mut self, new_input_buffer: &'a wgpu::Buffer) -> &mut Self {
+        // 更新输入缓冲区引用
+        self.input_buffer = new_input_buffer;
+        
+        // 获取绑定组布局
+        let bind_group_layout = self.pipeline.get_bind_group_layout(0);
+        
+        // 重新创建绑定组
+        self.bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Updated Transpose Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.output_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.dims_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.strides_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        
+        self
+    }
+    
+    /// 获取转置后的输出维度
+    pub fn get_output_dims(&self) -> &[u32] {
+        &self.output_dims
+    }
+    
+    /// 获取总元素数量
+    pub fn get_total_elements(&self) -> usize {
+        self.total_elements
+    }
+    
+    /// 获取输入缓冲区引用
+    pub fn get_input_buffer(&self) -> &wgpu::Buffer {
+        self.input_buffer
+    }
+    
+    /// 获取输出缓冲区引用
+    pub fn get_output_buffer(&self) -> &wgpu::Buffer {
+        &self.output_buffer
+    }
+    
+    /// 计算转置信息（输出形状和步长）
+    fn calculate_transpose_info(dims: &[u32]) -> (Vec<u32>, Vec<u32>) {
+        let rank = dims.len();
+        
+        // 计算循环右移的置换
+        let mut perm = vec![0; rank];
+        perm[0] = rank - 1;  // 最后一个维度移到第一位
+        for i in 1..rank {
+            perm[i] = i - 1;  // 其它维度依次后移
+        }
+        
+        // 计算转置后的形状
+        let output_dims: Vec<u32> = perm.iter().map(|&i| dims[i]).collect();
+        
+        // 计算转置用步长
+        let mut strides_t_r = vec![0u32; rank];
+        let mut current_stride = 1;
+        for j in (0..rank).rev() {
+            let dim = perm[j];
+            strides_t_r[dim] = current_stride;
+            current_stride *= dims[dim];
+        }
+        
+        (output_dims, strides_t_r)
+    }
+}

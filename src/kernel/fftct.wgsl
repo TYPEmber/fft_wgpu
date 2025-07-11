@@ -66,6 +66,7 @@ fn bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32) {
     let out_idx_b = out_idx_a + 1;
     
     // 执行蝶形运算并写入 buffer_b
+   // let b_twiddle = optimized_complex_mul(b, twiddle);
     let b_twiddle = complex_mul(b, twiddle);
     buffer_b[out_idx_a] = a + b_twiddle;
     buffer_b[out_idx_b] = a - b_twiddle;
@@ -92,8 +93,8 @@ fn fft_butterfly(idx: u32, n: u32, offset: u32, stage: u32) {
     let b = buffer_b[b_idx];
    //let a= vec2<f32>(1.0, 0.0);
    //let b= vec2<f32>(2.0, 0.0);
+   // let b_twiddle = optimized_complex_mul(b, twiddle);
     let b_twiddle = complex_mul(b, twiddle);
-    
     // 写回结果到同一缓冲区
     buffer_b[a_idx] = a + b_twiddle;
 
@@ -113,4 +114,11 @@ fn bit_reverse(n: u32, bits: u32) -> u32 {
 
 fn complex_mul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+}
+
+fn optimized_complex_mul(a: vec2<f32>, w: vec2<f32>) -> vec2<f32> {
+    let k1 = a.x * (w.x + w.y);
+    let k2 = a.y * (w.x - w.y);
+    let k3 = (a.x + a.y) * w.y;
+    return vec2<f32>(k1 - k3, k2 + k3);
 }

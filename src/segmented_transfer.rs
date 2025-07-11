@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 /// 表示分段传输的配置和状态
+#[derive(Clone)]
 pub struct SegmentedTransfer {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,

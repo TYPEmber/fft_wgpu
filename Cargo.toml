@@ -15,6 +15,9 @@ rustfft = "*"
 futures-intrusive = "0.5.0"
 rand = "0.9.1"
 approx = "0.5.1"
+wgpu-hal = "25.0.2"
+ash = "0.38.0"
+
 
 [[example]]
 name = "basic"
@@ -67,3 +70,24 @@ path = "src/examples/cly_tky.rs"
 [[example]]
 name = "transfer"
 path = "src/examples/transfer.rs"
+
+[[example]]
+name = "async"
+path = "src/examples/async.rs"
+
+[[example]]
+name = "basic2"
+path = "src/examples/basic2.rs"
+
+[[example]]
+name = "async2"
+path = "src/examples/async2.rs"
+
+[[example]]
+name = "radix4"
+path = "src/examples/radix4.rs"
+
+[[example]]
+name = "transpose"
+path = "src/examples/transpose.rs"
+

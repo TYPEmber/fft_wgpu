@@ -3,6 +3,7 @@ use std::f64::consts::PI;
 use wgpu::util::DeviceExt;
 #[tokio::main]
 async fn main() {
+  // unsafe{std::env::set_var("WGPU_VULKAN_ASYNC_COMPUTE", "1");}
     // 初始化 WebGPU 实例
     //let instance = wgpu::Instance::default();
     //let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
@@ -13,12 +14,34 @@ async fn main() {
 
         backend_options: Default::default(),
     });
+
+   
     // 请求适配器
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
         })
+        .await
+        .unwrap();
+
+        let supports_multiple_queues = adapter
+        .get_info()
+        .device_type != wgpu::DeviceType::Other; // This is a simplification
+    
+    println!("Adapter info: {:?}", adapter.get_info());
+    
+    // Request device with multiple queues if supported
+    let (device, queues) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                required_features: adapter.features(),
+                required_limits: adapter.limits(),
+                label: None,
+                ..Default::default()
+            },
+            None,
+        )
         .await
         .unwrap();
 
@@ -392,33 +415,33 @@ async fn main() {
         // //     (len * std::mem::size_of::<Complex>()) as u64,
         // // );
         // // 计算工作组维度
-        // let batches = len as u32 / fft_len;
+        let batches = len as u32 / fft_len;
 
-        // // 运行所有 FFT 阶段 - 都需要 fft_len/2 个线程
-        // {
-        //     let threads_per_fft = fft_len / 2; // 每个 FFT 需要 fft_len/2 个线程
-        //     //let total_threads = batches * threads_per_fft;
-        //     let workgroup_len = 64;
-        //     // let workgroups_x = (total_threads + workgroup_len - 1) / workgroup_len; // 向上取整
-        //     let x = (threads_per_fft / workgroup_len).max(1);
-        //     let y = (buffer_a.size() / 8 / fft_len as u64) as u32; //一个data中有2个u32，一个u32有4个byte
-        //     let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-        //         label: None,
-        //         timestamp_writes: None,
-        //     });
+        // 运行所有 FFT 阶段 - 都需要 fft_len/2 个线程
+        {
+            let threads_per_fft = fft_len / 2; // 每个 FFT 需要 fft_len/2 个线程
+            //let total_threads = batches * threads_per_fft;
+            let workgroup_len = 64;
+            // let workgroups_x = (total_threads + workgroup_len - 1) / workgroup_len; // 向上取整
+            let x = (threads_per_fft / workgroup_len).max(1);
+            let y = (buffer_a.size() / 8 / fft_len as u64) as u32; //一个data中有2个u32，一个u32有4个byte
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
 
-        //     cpass.set_pipeline(&pipeline);
-        //     cpass.set_bind_group(0, &bind_group, &[]);
+            cpass.set_pipeline(&pipeline);
+            cpass.set_bind_group(0, &bind_group, &[]);
 
-        //     // 设置推送常量
-        //     cpass.set_push_constants(0, &fft_len.to_le_bytes());
-        //     // push_data.extend_from_slice(&stage.to_le_bytes());
-        //     for i in 0..total_stages {
-        //         cpass.set_push_constants(4, &i.to_le_bytes());
+            // 设置推送常量
+            cpass.set_push_constants(0, &fft_len.to_le_bytes());
+            // push_data.extend_from_slice(&stage.to_le_bytes());
+            for i in 0..total_stages {
+                cpass.set_push_constants(4, &i.to_le_bytes());
 
-        //         cpass.dispatch_workgroups(x, y, 1);
-        //     }
-        // }
+                cpass.dispatch_workgroups(x, y, 1);
+            }
+        }
         //     // 结果总是在 buffer_b 中
         encoder.copy_buffer_to_buffer(
             &buffer_b,
@@ -438,6 +461,8 @@ async fn main() {
         drop(data_mapped);
         staging_buffer.unmap();
     }
-    println!("执行时间: {:?}", timer.elapsed());
-    println!("前几个结果: {:?}", &ans[..4]);
+    // println!("执行时间: {:?}", timer.elapsed());
+    // println!("前几个结果: {:?}", &ans[..4]);
+
+    dbg!(timer.elapsed());
 }

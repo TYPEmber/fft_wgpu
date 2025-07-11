@@ -36,7 +36,7 @@ fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
     let s = block_idx;
     let twiddle = twiddles[block_idx*J];  
     //let twiddle=vec2<f32>(1.0,0.0);
-    //let theta = - 2.0 * PI * f32(s * J) / f32(n);
+   // let theta = - 2.0 * PI * f32(s * J) / f32(n);
     //let twiddle = vec2<f32>(cos(theta), sin(theta));
 
     // 输入位置
