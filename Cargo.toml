@@ -91,3 +91,18 @@ path = "src/examples/radix4.rs"
 name = "transpose"
 path = "src/examples/transpose.rs"
 
+[[example]]
+name = "radix3"
+path = "src/examples/radix3.rs"
+
+[[example]]
+name = "radix5"
+path = "src/examples/radix5.rs"
+
+[[example]]
+name = "radix5_ha"
+path = "src/examples/radix5_ha.rs"
+
+[[example]]
+name = "radix6"
+path = "src/examples/radix6.rs"

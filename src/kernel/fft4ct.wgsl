@@ -24,7 +24,9 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>,
     let group_idx = workgroup_id.x + workgroup_id.y * num_workgroups.x + 
                    workgroup_id.z * group_size;
     let global_idx = group_idx * workgroup_len + local_invocation_index;
-    
+     if global_idx >= arrayLength(&buffer_a) / 4u {
+        return;
+    }
     // 确定此线程处理哪个批次的哪个蝶形
     // 基-4需要fft_len/4个线程（每个线程处理4个点）
     let threads_per_fft = fft_len / 4u;
@@ -69,7 +71,7 @@ fn quaternary_bit_reverse(n: u32, bits: u32) -> u32 {
 // 组合位反转和第一阶段基-4蝶形运算
 fn radix4_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32) {
     // 四进制位反转所需的位数（log4(N) = log2(N)/2，向上取整）
-    let bits = u32(log2(f32(n)));
+    let bits = u32(log2(f32(n))+0.4);
     
     // 每个工作项处理一个4点蝶形
    // let m = 1u;  // 第一阶段子问题大小
@@ -156,13 +158,13 @@ fn radix4_butterfly(idx: u32, n: u32, offset: u32, stage: u32) {
     let w2 = twiddles[w2_idx];
     let w3 = twiddles[w3_idx];
     
-    let b_rot = optimized_complex_mul(b, w1);
-    let c_rot = optimized_complex_mul(c, w2);
-    let d_rot = optimized_complex_mul(d, w3);
+   // let b_rot = optimized_complex_mul(b, w1);
+   // let c_rot = optimized_complex_mul(c, w2);
+   // let d_rot = optimized_complex_mul(d, w3);
 
-    //let b_rot = complex_mul(b, w1);
-   // let c_rot = complex_mul(c, w2);
-   // let d_rot = complex_mul(d, w3);
+    let b_rot = complex_mul(b, w1);
+    let c_rot = complex_mul(c, w2);
+    let d_rot = complex_mul(d, w3);
     
     // 执行基-4蝶形运算
     let ac = a + c_rot;
@@ -189,9 +191,9 @@ fn complex_mul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
 }
 
-fn optimized_complex_mul(a: vec2<f32>, w: vec2<f32>) -> vec2<f32> {
-    let k1 = a.x * (w.x + w.y);
-    let k2 = a.y * (w.x - w.y);
-    let k3 = (a.x + a.y) * w.y;
-    return vec2<f32>(k1 - k3, k2 + k3);
-}
+//fn optimized_complex_mul(a: vec2<f32>, w: vec2<f32>) -> vec2<f32> {
+   // let k1 = a.x * (w.x + w.y);
+   // let k2 = a.y * (w.x - w.y);
+   // let k3 = (a.x + a.y) * w.y;
+   // return vec2<f32>(k1 - k3, k2 + k3);
+//}

@@ -1,7 +1,7 @@
+use fft_wgpu::SegmentedTransfer;
 use num_complex::Complex32 as Complex;
 use std::f64::consts::PI;
 use std::sync::Arc;
-use fft_wgpu::SegmentedTransfer;
 use wgpu::util::DeviceExt;
 
 #[tokio::main]
@@ -26,15 +26,18 @@ async fn main() {
         )
         .await
         .unwrap();
-    
+
     let device_arc = Arc::new(device);
     let queue_arc = Arc::new(queue);
-    
-    // 测试数据
-    let data = vec![Complex::new(1.0, 0.0); 512 * 500*5];
+
+    // Test data - for radix-3 FFT, we need a length that's a power of 3
+    // Using 3^5 = 243 as an example
+    let fft_len = 243;
+    let batch_count = 500;
+    let data = vec![Complex::new(2.0, 1.0); fft_len * batch_count];
     let len = data.len();
     let mut ans = vec![Complex::ZERO; len];
-    
+
     let buffer_a = device_arc.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: (len * std::mem::size_of::<Complex>()) as u64,
@@ -47,12 +50,11 @@ async fn main() {
     let buffer_b = device_arc.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Output Buffer B"),
         size: (len * std::mem::size_of::<Complex>()) as u64,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
-    
-    // 使用自定义传输
+
+    // Use custom transfer
     let custom_transfer = SegmentedTransfer::new::<Complex, f32>(
         Arc::clone(&device_arc),
         Arc::clone(&queue_arc),
@@ -61,15 +63,15 @@ async fn main() {
         None,
     );
 
-    // 创建基-4 FFT着色器模块
+    // Create radix-3 FFT shader module
     let cs_module = device_arc.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("FFT Radix-4 Shader"),
+        label: Some("FFT Radix-3 Shader"),
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-            "../kernel/fft4ct.wgsl"
+            "../kernel/ifft3ct.wgsl"
         ))),
     });
 
-    // 创建绑定组布局
+    // Create bind group layout
     let bgl = device_arc.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("FFT Bind Group Layout"),
         entries: &[
@@ -106,7 +108,7 @@ async fn main() {
         ],
     });
 
-    // 创建管线布局
+    // Create pipeline layout
     let ppl = device_arc.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("FFT Pipeline Layout"),
         bind_group_layouts: &[&bgl],
@@ -116,9 +118,9 @@ async fn main() {
         }],
     });
 
-    // 创建计算管线
+    // Create compute pipeline
     let pipeline = device_arc.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("FFT Radix-4 Pipeline"),
+        label: Some("FFT Radix-3 Pipeline"),
         layout: Some(&ppl),
         module: &cs_module,
         entry_point: Some("main"),
@@ -126,12 +128,18 @@ async fn main() {
         cache: None,
     });
 
-    // FFT 参数
-    let fft_len: u32 = 1024; // 确保是4的幂次
-    // 对于基-4，总阶段数是log4(fft_len)，即log2(fft_len)/2
-    let total_stages = (f32::log2(fft_len as f32) / 2.0).round() as u32;
+    // FFT parameters
+    let fft_len: u32 = 243; // 3^5 for radix-3 FFT
+    let mut n=fft_len;
+    // For radix-3, total stages is log3(fft_len)
+    // let mut total_stages = 0 as u32;
+    // while n > 1 {
+    //     n /= 3;
+    //     total_stages += 1;
+    // }
+    let total_stages = (f32::log2(fft_len as f32) / f32::log2(3.0)).round() as u32;
 
-    // 修正：预计算完整的n个旋转因子
+    // Precompute twiddle factors
     let n = fft_len as usize;
     let mut twiddles = Vec::with_capacity(n);
 
@@ -146,7 +154,7 @@ async fn main() {
         usage: wgpu::BufferUsages::STORAGE,
     });
 
-    // 创建绑定组
+    // Create bind group
     let bind_group = device_arc.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("FFT Bind Group"),
         layout: &bgl,
@@ -166,21 +174,22 @@ async fn main() {
         ],
     });
 
-    // 执行计时测试
+    // Execute timing test
     let timer = std::time::Instant::now();
 
-    for _ in 0..1000 {
+    for _ in 0..10 {
         custom_transfer.upload_data(&data, &buffer_a).await;
-        
-        let mut compute_encoder = device_arc.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("FFT Radix-4 Compute Encoder"),
-        });
 
-        // 计算工作组维度 - 每个工作项处理4个点
-        let threads_per_fft = fft_len / 4; // 基-4每个线程处理4个点
+        let mut compute_encoder =
+            device_arc.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("FFT Radix-3 Compute Encoder"),
+            });
+
+        // Compute workgroup dimensions - each work item processes 3 points
+        let threads_per_fft = fft_len / 3; // Radix-3 each thread processes 3 points
         let workgroup_len = 64;
-        let x = (threads_per_fft / workgroup_len).max(1);
-        let y = (buffer_a.size() / 8 / fft_len as u64) as u32; // 批次数
+        let x = (threads_per_fft as f32 / workgroup_len as f32).ceil() as u32;
+        let y = (buffer_a.size() / 8 / fft_len as u64) as u32; // Number of batches
 
         let mut cpass = compute_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
@@ -190,22 +199,22 @@ async fn main() {
         cpass.set_pipeline(&pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
 
-        // 运行所有FFT阶段（基-4阶段数是基-2的一半）
+        // Run all FFT stages
         cpass.set_push_constants(0, &fft_len.to_le_bytes());
-        
+
         for i in 0..total_stages {
             cpass.set_push_constants(4, &i.to_le_bytes());
             cpass.dispatch_workgroups(x, y, 1);
         }
 
-        drop(cpass); // 结束计算通道
+        drop(cpass); // End compute pass
         queue_arc.submit(Some(compute_encoder.finish()));
 
         let _result: Vec<Complex> = custom_transfer
             .download_data(&buffer_b, Some(&mut ans))
             .await;
     }
-    
-    println!("基-4 FFT执行时间: {:?}", timer.elapsed());
-    println!("前几个结果: {:?}", &ans[..4]);
+
+    println!("Radix-3 FFT execution time: {:?}", timer.elapsed());
+    println!("First few results: {:?}", &ans[..3]);
 }

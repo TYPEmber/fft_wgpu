@@ -13,9 +13,13 @@ var<push_constant> consts: PushConstants;
 
 @compute @workgroup_size(workgroup_len)
 fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups) num_workgroups: vec3<u32>, @builtin(local_invocation_index) local_invocation_index: u32) {
+    
     let fft_len = consts.fft_len;
     let stage = consts.stage;
     let index = (workgroup_id.x + workgroup_id.y * num_workgroups.x + workgroup_id.z * num_workgroups.y * num_workgroups.x) * workgroup_len + local_invocation_index;
+     if index >= arrayLength(&buffer_a) / 2u {
+        return;
+    }
     let batch_idx = index / fft_len;
     let batch_offset = batch_idx * fft_len;
     let local_idx = index % (fft_len / 2u);
@@ -38,7 +42,7 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups)
 // 组合位反转和第一阶段蝶形运算的函数
 fn bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32) {
     // 第一步：位反转 - 将 buffer_a 中的数据按位反转顺序读入临时数组
-    let bits = u32(log2(f32(n)));
+    let bits = u32(log2(f32(n))+0.5);
     
     // 蝶形运算的参数 (m=1 表示第一阶段)
     let m = 1u;  // 第一阶段蝶形运算的子问题大小
@@ -116,9 +120,9 @@ fn complex_mul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
 }
 
-fn optimized_complex_mul(a: vec2<f32>, w: vec2<f32>) -> vec2<f32> {
-    let k1 = a.x * (w.x + w.y);
-    let k2 = a.y * (w.x - w.y);
-    let k3 = (a.x + a.y) * w.y;
-    return vec2<f32>(k1 - k3, k2 + k3);
-}
+//fn optimized_complex_mul(a: vec2<f32>, w: vec2<f32>) -> vec2<f32> {
+   // let k1 = a.x * (w.x + w.y);
+   // let k2 = a.y * (w.x - w.y);
+    //let k3 = (a.x + a.y) * w.y;
+    //return vec2<f32>(k1 - k3, k2 + k3);
+//}

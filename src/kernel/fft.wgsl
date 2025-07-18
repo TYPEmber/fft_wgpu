@@ -29,7 +29,7 @@ fn fft(idx: u32, n: u32, offset: u32, stage: u32) {
     let block_size = 2u * J;
    // let shared_value = subgroupBroadcast(local_value, 0); 
     //let total_blocks = n / block_size;
-    let total_stages= u32(log2(f32(n)));
+    let total_stages= u32(log2(f32(n))+0.5);
     let block_idx = idx / J;
     let j = idx % J;
 
