@@ -68,7 +68,7 @@ async fn main() {
     let cs_module = device_arc.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("FFT Radix-5 Shader"),
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-            "../kernel/fft5ct.wgsl"
+            "../kernel/ifft5ct.wgsl"
         ))),
     });
 

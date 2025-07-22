@@ -20,6 +20,10 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>,
     let fft_len = consts.fft_len;
     let stage = consts.stage;
     
+    // Calculate total stages and identify final stage
+    let log6_n = u32(log2(f32(fft_len)) / log2(6.0) + 0.5);
+    let final_stage = log6_n - 1u;
+    
     // Calculate global index
     let group_size = num_workgroups.x * num_workgroups.y;
     let group_idx = workgroup_id.x + workgroup_id.y * num_workgroups.x + 
@@ -40,17 +44,18 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>,
     if (stage == 0u) {
         // Stage 0: Combine bit reversal and first stage butterfly
         if (local_idx < threads_per_fft) {
-            radix6_bit_reversal_and_butterfly(local_idx, fft_len, batch_offset);
+            inverse_radix6_bit_reversal_and_butterfly(local_idx, fft_len, batch_offset,stage == final_stage);
         }
     } else {
         // Stage 1 and above: Standard radix-6 butterfly
+        // Pass is_final_stage flag to apply 1/N scaling on last stage
         if (local_idx < threads_per_fft) {
-            radix6_butterfly(local_idx, fft_len, batch_offset, stage);
+            inverse_radix6_butterfly(local_idx, fft_len, batch_offset, stage, stage == final_stage);
         }
     }
 }
 
-// Base-6 bit reversal function
+// Base-6 bit reversal function (same as FFT)
 fn base6_bit_reverse(n: u32, log6_fft_len: u32) -> u32 {
     var reversed = 0u;
     var n_copy = n;
@@ -63,10 +68,10 @@ fn base6_bit_reverse(n: u32, log6_fft_len: u32) -> u32 {
     return reversed;
 }
 
-// Combine bit reversal and first stage radix-6 butterfly using Prime Factor Algorithm
-fn radix6_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32) {
-    // Compute log base 6 of n (rounded down)
-    let log6_n = u32(log2(f32(n)) / log2(6.0)+0.4);
+// Combine bit reversal and first stage radix-6 butterfly for IFFT
+fn inverse_radix6_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32, is_final_stage: bool) {
+    // Compute log base 6 of n
+    let log6_n = u32(log2(f32(n)) / log2(6.0) + 0.5);
     
     // Each work item processes a 6-point butterfly
     let block_idx = idx;
@@ -87,71 +92,82 @@ fn radix6_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32) {
     let z4 = buffer_a[z4_idx_br];
     let z5 = buffer_a[z5_idx_br];
     
-    // Apply radix-6 butterfly formula according to the Prime Factor Algorithm
-    // t1 = z2 + z4
+    // Apply inverse radix-6 butterfly formula
+    // t1 = z2 + z4 (same as FFT)
     let t1 = z2 + z4;
     
-    // t2 = z0 - t1/2
+    // t2 = z0 - t1/2 (same as FFT)
     let t1_half = vec2<f32>(t1.x * 0.5, t1.y * 0.5);
     let t2 = z0 - t1_half;
     
-    // t3 = sin(π/3)(z2 - z4)
+    // t3 = sin(π/3)(z2 - z4) (same as FFT)
     let z2_minus_z4 = z2 - z4;
     let t3 = vec2<f32>(
         SQRT3_DIV2 * z2_minus_z4.x,
         SQRT3_DIV2 * z2_minus_z4.y
     );
     
-    // t4 = z5 + z1
+    // t4 = z5 + z1 (same as FFT)
     let t4 = z5 + z1;
     
-    // t5 = z3 - t4/2
+    // t5 = z3 - t4/2 (same as FFT)
     let t4_half = vec2<f32>(t4.x * 0.5, t4.y * 0.5);
     let t5 = z3 - t4_half;
     
-    // t6 = sin(π/3)(z5 - z1)
+    // t6 = sin(π/3)(z5 - z1) (same as FFT)
     let z5_minus_z1 = z5 - z1;
     let t6 = vec2<f32>(
         SQRT3_DIV2 * z5_minus_z1.x,
         SQRT3_DIV2 * z5_minus_z1.y
     );
     
-    // t7 = z0 + t1
+    // t7 = z0 + t1 (same as FFT)
     let t7 = z0 + t1;
     
-    // t8 = t2 + i*t3
-    let t8 = vec2<f32>(t2.x - t3.y, t2.y + t3.x); // Complex multiplication by i
+    // For IFFT, reverse the direction of complex rotations:
+    // t8 = t2 - i*t3 (opposite of FFT's t2 + i*t3)
+    let t8 = vec2<f32>(t2.x + t3.y, t2.y - t3.x); // Complex multiplication by -i
     
-    // t9 = t2 - i*t3
-    let t9 = vec2<f32>(t2.x + t3.y, t2.y - t3.x); // Complex multiplication by -i
+    // t9 = t2 + i*t3 (opposite of FFT's t2 - i*t3)
+    let t9 = vec2<f32>(t2.x - t3.y, t2.y + t3.x); // Complex multiplication by i
     
-    // t10 = z3 + t4
+    // t10 = z3 + t4 (same as FFT)
     let t10 = z3 + t4;
     
-    // t11 = t5 + i*t6
-    let t11 = vec2<f32>(t5.x - t6.y, t5.y + t6.x); // Complex multiplication by i
+    // t11 = t5 - i*t6 (opposite of FFT's t5 + i*t6)
+    let t11 = vec2<f32>(t5.x + t6.y, t5.y - t6.x); // Complex multiplication by -i
     
-    // t12 = t5 - i*t6
-    let t12 = vec2<f32>(t5.x + t6.y, t5.y - t6.x); // Complex multiplication by -i
+    // t12 = t5 + i*t6 (opposite of FFT's t5 - i*t6)
+    let t12 = vec2<f32>(t5.x - t6.y, t5.y + t6.x); // Complex multiplication by i
     
     // Final outputs
-    // x0 = t7 + t10
-    let x0 = t7 + t10;
+    // x0 = t7 + t10 (same as FFT)
+    var x0 = t7 + t10;
     
-    // x4 = t8 + t11
-    let x4 = t8 + t11;
+    // x4 = t8 + t11 (same as FFT but using IFFT's t8 and t11)
+    var x4 = t8 + t11;
     
-    // x2 = t9 + t12
-    let x2 = t9 + t12;
+    // x2 = t9 + t12 (same as FFT but using IFFT's t9 and t12)
+    var x2 = t9 + t12;
     
-    // x3 = t7 - t10
-    let x3 = t7 - t10;
+    // x3 = t7 - t10 (same as FFT)
+    var x3 = t7 - t10;
     
-    // x1 = t8 - t11
-    let x1 = t8 - t11;
+    // x1 = t8 - t11 (same as FFT but using IFFT's t8 and t11)
+    var x1 = t8 - t11;
     
-    // x5 = t9 - t12
-    let x5 = t9 - t12;
+    // x5 = t9 - t12 (same as FFT but using IFFT's t9 and t12)
+    var x5 = t9 - t12;
+
+     if (is_final_stage) {
+        let scale = 1.0 / f32(n);
+        x0 = vec2<f32>(x0.x * scale, x0.y * scale);
+        x1 = vec2<f32>(x1.x * scale, x1.y * scale);
+        x2 = vec2<f32>(x2.x * scale, x2.y * scale);
+        x3 = vec2<f32>(x3.x * scale, x3.y * scale);
+        x4 = vec2<f32>(x4.x * scale, x4.y * scale);
+        x5 = vec2<f32>(x5.x * scale, x5.y * scale);
+    }
     
     // Write to output in sequential order
     let out_idx = block_idx * 6u + offset;
@@ -163,10 +179,9 @@ fn radix6_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32) {
     buffer_b[out_idx + 5u] = x5;
 }
 
-// Standard radix-6 butterfly operation for stages > 0
-fn radix6_butterfly(idx: u32, n: u32, offset: u32, stage: u32) {
+// Standard inverse radix-6 butterfly operation for stages > 0
+fn inverse_radix6_butterfly(idx: u32, n: u32, offset: u32, stage: u32, is_final_stage: bool) {
     // Calculate current stage butterfly parameters
-    // For radix-6, we have 6^stage
     let m = pow6(stage);
     let step = 6u * m;
     let k = idx % m;
@@ -196,12 +211,13 @@ fn radix6_butterfly(idx: u32, n: u32, offset: u32, stage: u32) {
     let w4_idx = 4u * twiddle_base;
     let w5_idx = 5u * twiddle_base;
     
-    // Get and apply twiddle factors
-    let w1 = twiddles[w1_idx % arrayLength(&twiddles)];
-    let w2 = twiddles[w2_idx % arrayLength(&twiddles)];
-    let w3 = twiddles[w3_idx % arrayLength(&twiddles)];
-    let w4 = twiddles[w4_idx % arrayLength(&twiddles)];
-    let w5 = twiddles[w5_idx % arrayLength(&twiddles)];
+    // Get twiddle factors and take conjugate for IFFT
+    // For IFFT, we use exp(j2πk/N) which is conjugate of FFT's exp(-j2πk/N)
+    let w1 = vec2<f32>(twiddles[w1_idx % arrayLength(&twiddles)].x, -twiddles[w1_idx % arrayLength(&twiddles)].y);
+    let w2 = vec2<f32>(twiddles[w2_idx % arrayLength(&twiddles)].x, -twiddles[w2_idx % arrayLength(&twiddles)].y);
+    let w3 = vec2<f32>(twiddles[w3_idx % arrayLength(&twiddles)].x, -twiddles[w3_idx % arrayLength(&twiddles)].y);
+    let w4 = vec2<f32>(twiddles[w4_idx % arrayLength(&twiddles)].x, -twiddles[w4_idx % arrayLength(&twiddles)].y);
+    let w5 = vec2<f32>(twiddles[w5_idx % arrayLength(&twiddles)].x, -twiddles[w5_idx % arrayLength(&twiddles)].y);
     
     // Apply twiddle factors
     let z0 = z0_raw;
@@ -211,71 +227,72 @@ fn radix6_butterfly(idx: u32, n: u32, offset: u32, stage: u32) {
     let z4 = complex_mul(z4_raw, w4);
     let z5 = complex_mul(z5_raw, w5);
     
-    // Now apply Prime Factor Algorithm for radix-6 butterfly
-    // t1 = z2 + z4
+    // Now apply inverse Prime Factor Algorithm for radix-6 butterfly
+    // t1 = z2 + z4 (same as FFT)
     let t1 = z2 + z4;
     
-    // t2 = z0 - t1/2
+    // t2 = z0 - t1/2 (same as FFT)
     let t1_half = vec2<f32>(t1.x * 0.5, t1.y * 0.5);
     let t2 = z0 - t1_half;
     
-    // t3 = sin(π/3)(z2 - z4)
+    // t3 = sin(π/3)(z2 - z4) (same as FFT)
     let z2_minus_z4 = z2 - z4;
     let t3 = vec2<f32>(
         SQRT3_DIV2 * z2_minus_z4.x,
         SQRT3_DIV2 * z2_minus_z4.y
     );
     
-    // t4 = z5 + z1
+    // t4 = z5 + z1 (same as FFT)
     let t4 = z5 + z1;
     
-    // t5 = z3 - t4/2
+    // t5 = z3 - t4/2 (same as FFT)
     let t4_half = vec2<f32>(t4.x * 0.5, t4.y * 0.5);
     let t5 = z3 - t4_half;
     
-    // t6 = sin(π/3)(z5 - z1)
+    // t6 = sin(π/3)(z5 - z1) (same as FFT)
     let z5_minus_z1 = z5 - z1;
     let t6 = vec2<f32>(
         SQRT3_DIV2 * z5_minus_z1.x,
         SQRT3_DIV2 * z5_minus_z1.y
     );
     
-    // t7 = z0 + t1
+    // t7 = z0 + t1 (same as FFT)
     let t7 = z0 + t1;
     
-    // t8 = t2 + i*t3
-    let t8 = vec2<f32>(t2.x - t3.y, t2.y + t3.x); // Complex multiplication by i
+    // For IFFT, reverse the direction of complex rotations:
+    // t8 = t2 - i*t3 (opposite of FFT's t2 + i*t3)
+    let t8 = vec2<f32>(t2.x + t3.y, t2.y - t3.x); // Complex multiplication by -i
     
-    // t9 = t2 - i*t3
-    let t9 = vec2<f32>(t2.x + t3.y, t2.y - t3.x); // Complex multiplication by -i
+    // t9 = t2 + i*t3 (opposite of FFT's t2 - i*t3)
+    let t9 = vec2<f32>(t2.x - t3.y, t2.y + t3.x); // Complex multiplication by i
     
-    // t10 = z3 + t4
+    // t10 = z3 + t4 (same as FFT)
     let t10 = z3 + t4;
     
-    // t11 = t5 + i*t6
-    let t11 = vec2<f32>(t5.x - t6.y, t5.y + t6.x); // Complex multiplication by i
+    // t11 = t5 - i*t6 (opposite of FFT's t5 + i*t6)
+    let t11 = vec2<f32>(t5.x + t6.y, t5.y - t6.x); // Complex multiplication by -i
     
-    // t12 = t5 - i*t6
-    let t12 = vec2<f32>(t5.x + t6.y, t5.y - t6.x); // Complex multiplication by -i
+    // t12 = t5 + i*t6 (opposite of FFT's t5 - i*t6)
+    let t12 = vec2<f32>(t5.x - t6.y, t5.y + t6.x); // Complex multiplication by i
     
     // Final outputs
-    // x0 = t7 + t10
-    let x0 = t7 + t10;
+    var x0 = t7 + t10;
+    var x4 = t8 + t11;
+    var x2 = t9 + t12;
+    var x3 = t7 - t10;
+    var x1 = t8 - t11;
+    var x5 = t9 - t12;
     
-    // x4 = t8 + t11
-    let x4 = t8 + t11;
-    
-    // x2 = t9 + t12
-    let x2 = t9 + t12;
-    
-    // x3 = t7 - t10
-    let x3 = t7 - t10;
-    
-    // x1 = t8 - t11
-    let x1 = t8 - t11;
-    
-    // x5 = t9 - t12
-    let x5 = t9 - t12;
+    // Apply 1/N scaling on the final stage
+    if (is_final_stage) {
+        let scale = 1.0 / f32(n);
+        x0 = vec2<f32>(x0.x * scale, x0.y * scale);
+        x1 = vec2<f32>(x1.x * scale, x1.y * scale);
+        x2 = vec2<f32>(x2.x * scale, x2.y * scale);
+        x3 = vec2<f32>(x3.x * scale, x3.y * scale);
+        x4 = vec2<f32>(x4.x * scale, x4.y * scale);
+        x5 = vec2<f32>(x5.x * scale, x5.y * scale);
+    }
     
     // Write back results
     buffer_b[z0_idx] = x0;
@@ -286,7 +303,7 @@ fn radix6_butterfly(idx: u32, n: u32, offset: u32, stage: u32) {
     buffer_b[z5_idx] = x5;
 }
 
-// Helper to calculate 6^x
+// Helper to calculate 6^x (same as FFT)
 fn pow6(x: u32) -> u32 {
     var result = 1u;
     for (var i = 0u; i < x; i++) {
@@ -295,7 +312,7 @@ fn pow6(x: u32) -> u32 {
     return result;
 }
 
-// Complex multiplication helper
+// Complex multiplication helper (same as FFT)
 fn complex_mul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
 }
