@@ -106,3 +106,7 @@ path = "src/examples/radix5_ha.rs"
 [[example]]
 name = "radix6"
 path = "src/examples/radix6.rs"
+
+[[example]]
+name = "fftprocessor"
+path = "src/examples/fftprocessor.rs"

@@ -85,8 +85,8 @@ fn inverse_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32,is_final_sta
     }
     
     // 写回结果到同一缓冲区
-    buffer_b[a_idx] = result_a;
-    buffer_b[b_idx] = result_b;
+    buffer_b[out_idx_a] = result_a;
+    buffer_b[out_idx_b] = result_b;
     //buffer_b[out_idx_a] = a + b_twiddle;
     //buffer_b[out_idx_b] = a - b_twiddle;
 }
