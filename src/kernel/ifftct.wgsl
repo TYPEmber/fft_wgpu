@@ -32,7 +32,7 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups)
          // 阶段0：结合位反转和第一阶段蝶形运算
         // 每个线程处理一对元素 - 需要 fft_len/2 个线程
         if (local_idx < fft_len / 2u) {
-            inverse_bit_reversal_and_butterfly(local_idx, fft_len, batch_offset,stage == final_stage);
+            inverse_bit_reversal_and_butterfly(local_idx, fft_len, batch_offset);
         }
     } else {
         // 阶段 1 及以上：标准蝶形运算
@@ -45,7 +45,7 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups)
 }
 
 // 组合位反转和第一阶段蝶形运算的函数 (IFFT版本)
-fn inverse_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32,is_final_stage: bool) {
+fn inverse_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32) {
     // 第一步：位反转 - 将 buffer_a 中的数据按位反转顺序读入临时数组
     let bits = u32(log2(f32(n))+0.5);
     
@@ -78,12 +78,6 @@ fn inverse_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32,is_final_sta
     var result_b = a - b_twiddle;
     
     // 在最终阶段应用1/N缩放 (IFFT变更)
-    if (is_final_stage) {
-        let scale = 1.0 / f32(n);
-        result_a = vec2<f32>(result_a.x * scale, result_a.y * scale);
-        result_b = vec2<f32>(result_b.x * scale, result_b.y * scale);
-    }
-    
     // 写回结果到同一缓冲区
     buffer_b[out_idx_a] = result_a;
     buffer_b[out_idx_b] = result_b;

@@ -105,13 +105,6 @@ fn inverse_radix3_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32) {
     let out_idx_a = block_idx * 3u + 0u + offset;
     let out_idx_b = block_idx * 3u + 1u + offset;
     let out_idx_c = block_idx * 3u + 2u + offset;
-
-    if (log3_n==1u) {
-        let scale = 1.0 / f32(n);
-        x0 = vec2<f32>(x0.x * scale, x0.y * scale);
-        x1 = vec2<f32>(x1.x * scale, x1.y * scale);
-        x2 = vec2<f32>(x2.x * scale, x2.y * scale);
-    }
     
     buffer_b[out_idx_a] = x0;
     buffer_b[out_idx_b] = x1;

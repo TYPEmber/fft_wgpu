@@ -5,6 +5,15 @@ use std::result;
 use wgpu::hal::auxil::db;
 use wgpu::util::DeviceExt;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FftRadix {
+    Radix2,
+    Radix3,
+    Radix4,
+    Radix5,
+    Radix6,
+}
+
 #[derive(Debug)]
 pub enum FftDirection {
     Forward,
@@ -20,31 +29,62 @@ pub struct FftProcessor<'a> {
     pub buffer_a: &'a wgpu::Buffer,
     pub buffer_b: wgpu::Buffer,
     twiddle_buffer: wgpu::Buffer,
-    //pub round_num: wgpu::Buffer,
-    // pub fft_len_buf: wgpu::Buffer,
-    pub fft_len: u32,
-    pub data_len: u32,
+    radix: FftRadix,
+    fft_len: u32,
+    data_len: u32,
     direction: FftDirection,
+}
+
+#[derive(Debug)]
+pub enum FftError {
+    InvalidRadix,
+    InvalidLength,
+    UnsupportedCombination,
+}
+
+impl FftRadix {
+    /// 获取基底的数值表示
+    pub fn value(&self) -> u32 {
+        match self {
+            FftRadix::Radix2 => 2,
+            FftRadix::Radix3 => 3,
+            FftRadix::Radix4 => 4,
+            FftRadix::Radix5 => 5,
+            FftRadix::Radix6 => 6,
+        }
+    }
+
+    /// 计算FFT所需的阶段数
+    pub fn num_stages(&self, len: u32) -> u32 {
+        let base = self.value() as f32;
+        (len as f32).log(base).round() as u32
+    }
 }
 
 impl<'a> FftProcessor<'a> {
     pub fn new(
+        radix: FftRadix,
         device: &'a wgpu::Device,
         queue: &'a wgpu::Queue,
         src: &'a wgpu::Buffer,
         fft_len: u32,
         direction: FftDirection,
-    ) -> Self {
-        let pipeline = match direction {
-            FftDirection::Forward => prepare_cs_model_forward(device),
-            FftDirection::Inverse => prepare_cs_model_backward(device),
-        };
+    ) -> Result<Self, FftError> {
+        // 验证长度是否匹配基底
+        // if !radix.is_valid_length(fft_len) {
+        //     return Err(FftError::InvalidLength);
+        // }
+
+        // 创建计算管线
+        let pipeline = create_pipeline(device, radix, &direction)?;
+
         let data_len = src.size();
         let data_len_u32 = data_len as u32;
         let buffer_a = src;
 
+        // 创建输出缓冲区
         let buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
+            label: Some("FFT Output Buffer"),
             size: data_len,
             usage: wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC
@@ -52,22 +92,25 @@ impl<'a> FftProcessor<'a> {
             mapped_at_creation: false,
         });
 
+        // 生成旋转因子
         let n = fft_len as usize;
-        let mut twiddles = Vec::with_capacity(n / 2);
+        let mut twiddles = Vec::with_capacity(n);
 
-        for k in 0..n / 2 {
+        for k in 0..n {
             let theta = -2.0 * PI * (k as f64) / (n as f64);
             twiddles.push(Complex::new(theta.cos() as f32, theta.sin() as f32));
         }
 
+        // 创建旋转因子缓冲区
         let twiddle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Twiddle Buffer"),
             contents: bytemuck::cast_slice(&twiddles),
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        let bind_group_forward = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
+        // 创建绑定组
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("FFT Bind Group"),
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[
                 wgpu::BindGroupEntry {
@@ -85,81 +128,180 @@ impl<'a> FftProcessor<'a> {
             ],
         });
 
-        Self {
+        Ok(Self {
             device,
             queue,
             pipeline,
-            bind_group: bind_group_forward,
-
+            bind_group,
             buffer_a,
             buffer_b,
             twiddle_buffer,
+            radix,
             fft_len,
-            data_len: data_len_u32, //round_num,
-            direction,              // fft_len_buf,
-        }
+            data_len: data_len_u32,
+            direction,
+        })
     }
 
     pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
-        // let bind_group_forward = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     label: None,
-        //     layout: &self.pipeline.get_bind_group_layout(0),
-        //     entries: &[
-        //         wgpu::BindGroupEntry {
-        //             binding: 0,
-        //             resource: self.buffer_a.as_entire_binding(),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 1,
-        //             resource: self.buffer_b.as_entire_binding(),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 2,
-        //             resource: self.twiddle_buffer.as_entire_binding(),
-        //         },
-        //     ],
-        // });
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: None,
+            label: Some("FFT Compute Pass"),
             timestamp_writes: None,
         });
 
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &self.bind_group, &[]);
 
-        let x = (self.fft_len / 2 / 64).max(1); //每个x对应一组fft运算
-        //let x =self.data_len/self.fft_len;
-        let y = (self.buffer_a.size() / 8 / self.fft_len as u64) as u32; //一个data中有2个u32，一个u32有4个byte
-        //let y=1;
-        let z = 1;
+        // 计算工作组数量
+        let workgroup_size = 64;
+        let workgroup_count_per_fft = match self.radix {
+            FftRadix::Radix2 => (self.fft_len / 2 / workgroup_size).max(1),
+            FftRadix::Radix3 => (self.fft_len / 3 / workgroup_size).max(1),
+            FftRadix::Radix4 => (self.fft_len / 4 / workgroup_size).max(1),
+            FftRadix::Radix5 => (self.fft_len / 5 / workgroup_size).max(1),
+            FftRadix::Radix6 => (self.fft_len / 6 / workgroup_size).max(1),
+        };
 
-        // dbg!(self);
+        // 计算数据批次数量
+        let batch_count = (self.data_len / (self.fft_len * 8)) as u32; // 每个复数8字节
 
+        // 计算阶段数
+        let num_stages = self.radix.num_stages(self.fft_len);
         cpass.set_push_constants(0, &self.fft_len.to_le_bytes());
-        //let i: u32 = 0;
-        for i in 0..(self.fft_len as f32).log2().round() as u32 {
-            cpass.set_push_constants(4, &i.to_le_bytes());
-            cpass.dispatch_workgroups(x, y, z);
+        // 设置FFT长度和当前阶段
+        for stage in 0..num_stages {
+            cpass.set_push_constants(4, &stage.to_le_bytes());
+            cpass.dispatch_workgroups(workgroup_count_per_fft, batch_count, 1);
         }
-        if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
-            self.buffer_a
-        } else {
-            &self.buffer_b
-        }
+        &self.buffer_b
     }
+
     pub fn get_output_buffer(&self) -> &wgpu::Buffer {
         &self.buffer_b
     }
 }
-//     pub fn new_forward(
+
+/// 统一创建计算管线
+fn create_pipeline(
+    device: &wgpu::Device,
+    radix: FftRadix,
+    direction: &FftDirection,
+) -> Result<wgpu::ComputePipeline, FftError> {
+    // 根据基底和方向选择WGSL文件
+    let shader_source = match (radix, direction) {
+        (FftRadix::Radix2, FftDirection::Forward) => include_str!("kernel/fftct.wgsl"),
+        (FftRadix::Radix2, FftDirection::Inverse) => include_str!("kernel/ifftct.wgsl"),
+        (FftRadix::Radix3, FftDirection::Forward) => include_str!("kernel/fft3ct.wgsl"),
+        (FftRadix::Radix3, FftDirection::Inverse) => include_str!("kernel/ifft3ct.wgsl"),
+        (FftRadix::Radix4, FftDirection::Forward) => include_str!("kernel/fft4ct.wgsl"),
+        (FftRadix::Radix4, FftDirection::Inverse) => include_str!("kernel/ifft4ct.wgsl"),
+        (FftRadix::Radix5, FftDirection::Forward) => include_str!("kernel/fft5ct.wgsl"),
+        (FftRadix::Radix5, FftDirection::Inverse) => include_str!("kernel/ifft5ct.wgsl"),
+        (FftRadix::Radix6, FftDirection::Forward) => include_str!("kernel/fft6ct.wgsl"),
+        (FftRadix::Radix6, FftDirection::Inverse) => include_str!("kernel/ifft6ct.wgsl"),
+        _ => return Err(FftError::UnsupportedCombination),
+    };
+
+    // 创建着色器模块
+    let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("FFT Shader"),
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(shader_source)),
+    });
+
+    // 创建绑定组布局
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("FFT Bind Group Layout"),
+        entries: &[
+            // 输入缓冲区
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // 输出缓冲区
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // 旋转因子缓冲区
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    // 创建管道布局
+    let ppl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("FFT Pipeline Layout"),
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[wgpu::PushConstantRange {
+            stages: wgpu::ShaderStages::COMPUTE,
+            range: 0..8, // 用于传递fft_len和stage
+        }],
+    });
+
+    // 创建计算管线
+    Ok(
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("FFT Compute Pipeline"),
+            layout: Some(&ppl),
+            module: &cs_module,
+            entry_point: Some("main"),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                zero_initialize_workgroup_memory: false,
+                ..Default::default()
+            },
+            cache: None,
+        }),
+    )
+}
+
+// #[derive(Debug)]
+// pub struct FftProcessor<'a> {
+//     device: &'a wgpu::Device,
+//     queue: &'a wgpu::Queue,
+//     pipeline: wgpu::ComputePipeline,
+//     bind_group: wgpu::BindGroup,
+//     pub buffer_a: &'a wgpu::Buffer,
+//     pub buffer_b: wgpu::Buffer,
+//     twiddle_buffer: wgpu::Buffer,
+//     //pub round_num: wgpu::Buffer,
+//     // pub fft_len_buf: wgpu::Buffer,
+//     pub fft_len: u32,
+//     pub data_len: u32,
+//     direction: FftDirection,
+// }
+
+// impl<'a> FftProcessor<'a> {
+//     pub fn new(
 //         device: &'a wgpu::Device,
 //         queue: &'a wgpu::Queue,
 //         src: &'a wgpu::Buffer,
 //         fft_len: u32,
 //         direction: FftDirection,
-//     )-> Self {
-//         let pipeline_forward = prepare_cs_model_forward(device);
-
+//     ) -> Self {
+//         let pipeline = match direction {
+//             FftDirection::Forward => prepare_cs_model_forward(device),
+//             FftDirection::Inverse => prepare_cs_model_backward(device),
+//         };
 //         let data_len = src.size();
 //         let data_len_u32 = data_len as u32;
 //         let buffer_a = src;
@@ -187,24 +329,9 @@ impl<'a> FftProcessor<'a> {
 //             usage: wgpu::BufferUsages::STORAGE,
 //         });
 
-//         // let round_num = device.create_buffer(&wgpu::BufferDescriptor {
-//         // label: None,
-//         // size: (std::mem::size_of::<u32>()) as u64,
-//         // usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-//         // mapped_at_creation: false,
-//         // });
-
-//         // let fft_len_buf = device.create_buffer(&wgpu::BufferDescriptor {
-//         // label: None,
-//         // size: (std::mem::size_of::<u32>()) as u64,
-//         // usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-//         // mapped_at_creation: false,
-//         // });
-
-//         // Instantiates the bind group, once again specifying the binding of buffers.
 //         let bind_group_forward = device.create_bind_group(&wgpu::BindGroupDescriptor {
 //             label: None,
-//             layout: &pipeline_forward.get_bind_group_layout(0),
+//             layout: &pipeline.get_bind_group_layout(0),
 //             entries: &[
 //                 wgpu::BindGroupEntry {
 //                     binding: 0,
@@ -224,7 +351,7 @@ impl<'a> FftProcessor<'a> {
 //         Self {
 //             device,
 //             queue,
-//             pipeline: pipeline_forward,
+//             pipeline,
 //             bind_group: bind_group_forward,
 
 //             buffer_a,
@@ -236,89 +363,55 @@ impl<'a> FftProcessor<'a> {
 //         }
 //     }
 
-//     pub fn new_inverse(
-//         device: &'a wgpu::Device,
-//         queue: &'a wgpu::Queue,
-//         src: &'a wgpu::Buffer,
-//         fft_len: u32,
-//         direction: FftDirection,
-//     )-> Self {
-//         let pipeline_forward = prepare_cs_model_forward(device);
-
-//         let data_len = src.size();
-//         let data_len_u32 = data_len as u32;
-//         let buffer_a = src;
-
-//         let buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
-//             label: None,
-//             size: data_len,
-//             usage: wgpu::BufferUsages::COPY_DST
-//                 | wgpu::BufferUsages::COPY_SRC
-//                 | wgpu::BufferUsages::STORAGE,
-//             mapped_at_creation: false,
-//         });
-
-//         let n = fft_len as usize;
-//         let mut twiddles = Vec::with_capacity(n / 2);
-
-//         for k in 0..n / 2 {
-//             let theta = -2.0 * PI * (k as f64) / (n as f64);
-//             twiddles.push(Complex::new(theta.cos() as f32, theta.sin() as f32));
-//         }
-
-//         let twiddle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-//             label: Some("Twiddle Buffer"),
-//             contents: bytemuck::cast_slice(&twiddles),
-//             usage: wgpu::BufferUsages::STORAGE,
-//         });
-
-//         // let round_num = device.create_buffer(&wgpu::BufferDescriptor {
-//         // label: None,
-//         // size: (std::mem::size_of::<u32>()) as u64,
-//         // usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-//         // mapped_at_creation: false,
+//     pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
+//         // let bind_group_forward = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+//         //     label: None,
+//         //     layout: &self.pipeline.get_bind_group_layout(0),
+//         //     entries: &[
+//         //         wgpu::BindGroupEntry {
+//         //             binding: 0,
+//         //             resource: self.buffer_a.as_entire_binding(),
+//         //         },
+//         //         wgpu::BindGroupEntry {
+//         //             binding: 1,
+//         //             resource: self.buffer_b.as_entire_binding(),
+//         //         },
+//         //         wgpu::BindGroupEntry {
+//         //             binding: 2,
+//         //             resource: self.twiddle_buffer.as_entire_binding(),
+//         //         },
+//         //     ],
 //         // });
-
-//         // let fft_len_buf = device.create_buffer(&wgpu::BufferDescriptor {
-//         // label: None,
-//         // size: (std::mem::size_of::<u32>()) as u64,
-//         // usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-//         // mapped_at_creation: false,
-//         // });
-
-//         // Instantiates the bind group, once again specifying the binding of buffers.
-//         let bind_group_forward = device.create_bind_group(&wgpu::BindGroupDescriptor {
+//         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
 //             label: None,
-//             layout: &pipeline_forward.get_bind_group_layout(0),
-//             entries: &[
-//                 wgpu::BindGroupEntry {
-//                     binding: 0,
-//                     resource: buffer_a.as_entire_binding(),
-//                 },
-//                 wgpu::BindGroupEntry {
-//                     binding: 1,
-//                     resource: buffer_b.as_entire_binding(),
-//                 },
-//                 wgpu::BindGroupEntry {
-//                     binding: 2,
-//                     resource: twiddle_buffer.as_entire_binding(),
-//                 },
-//             ],
+//             timestamp_writes: None,
 //         });
 
-//         Self {
-//             device,
-//             queue,
-//             pipeline: pipeline_forward,
-//             bind_group: bind_group_forward,
+//         cpass.set_pipeline(&self.pipeline);
+//         cpass.set_bind_group(0, &self.bind_group, &[]);
 
-//             buffer_a,
-//             buffer_b,
-//             twiddle_buffer,
-//             fft_len,
-//             data_len: data_len_u32, //round_num,
-//             direction,              // fft_len_buf,
+//         let x = (self.fft_len / 2 / 64).max(1); //每个x对应一组fft运算
+//         //let x =self.data_len/self.fft_len;
+//         let y = (self.buffer_a.size() / 8 / self.fft_len as u64) as u32; //一个data中有2个u32，一个u32有4个byte
+//         //let y=1;
+//         let z = 1;
+
+//         // dbg!(self);
+
+//         cpass.set_push_constants(0, &self.fft_len.to_le_bytes());
+//         //let i: u32 = 0;
+//         for i in 0..(self.fft_len as f32).log2().round() as u32 {
+//             cpass.set_push_constants(4, &i.to_le_bytes());
+//             cpass.dispatch_workgroups(x, y, z);
 //         }
+//         if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
+//             self.buffer_a
+//         } else {
+//             &self.buffer_b
+//         }
+//     }
+//     pub fn get_output_buffer(&self) -> &wgpu::Buffer {
+//         &self.buffer_b
 //     }
 // }
 

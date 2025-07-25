@@ -47,7 +47,7 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>,
     if (stage == 0u) {
         // Stage 0: Combine quinary bit reversal and first stage butterfly
         if (local_idx < threads_per_fft) {
-            inverse_radix5_bit_reversal_and_butterfly(local_idx, fft_len, batch_offset, stage == final_stage);
+            inverse_radix5_bit_reversal_and_butterfly(local_idx, fft_len, batch_offset);
         }
     } else {
         // Stage 1 and above: Standard radix-5 butterfly
@@ -72,7 +72,7 @@ fn quinary_bit_reverse(n: u32, log5_fft_len: u32) -> u32 {
 }
 
 // Combine bit reversal and first stage radix-5 butterfly for IFFT
-fn inverse_radix5_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32, is_final_stage: bool) {
+fn inverse_radix5_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32) {
     // Compute log base 5 of n
     let log5_n = u32(log2(f32(n)) / log2(5.0) + 0.4);
     
@@ -144,14 +144,6 @@ fn inverse_radix5_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32, is_f
     let out_idx3 = block_idx * 5u + 3u + offset;
     let out_idx4 = block_idx * 5u + 4u + offset;
 
-     if (is_final_stage) {
-        let scale = 1.0 / f32(n);
-        x0 = vec2<f32>(x0.x * scale, x0.y * scale);
-        x1 = vec2<f32>(x1.x * scale, x1.y * scale);
-        x2 = vec2<f32>(x2.x * scale, x2.y * scale);
-        x3 = vec2<f32>(x3.x * scale, x3.y * scale);
-        x4 = vec2<f32>(x4.x * scale, x4.y * scale);
-    }
     
     buffer_b[out_idx0] = x0;
     buffer_b[out_idx1] = x1;

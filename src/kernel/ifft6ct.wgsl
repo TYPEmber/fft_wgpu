@@ -44,7 +44,7 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>,
     if (stage == 0u) {
         // Stage 0: Combine bit reversal and first stage butterfly
         if (local_idx < threads_per_fft) {
-            inverse_radix6_bit_reversal_and_butterfly(local_idx, fft_len, batch_offset,stage == final_stage);
+            inverse_radix6_bit_reversal_and_butterfly(local_idx, fft_len, batch_offset);
         }
     } else {
         // Stage 1 and above: Standard radix-6 butterfly
@@ -69,7 +69,7 @@ fn base6_bit_reverse(n: u32, log6_fft_len: u32) -> u32 {
 }
 
 // Combine bit reversal and first stage radix-6 butterfly for IFFT
-fn inverse_radix6_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32, is_final_stage: bool) {
+fn inverse_radix6_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32) {
     // Compute log base 6 of n
     let log6_n = u32(log2(f32(n)) / log2(6.0) + 0.5);
     
@@ -159,15 +159,6 @@ fn inverse_radix6_bit_reversal_and_butterfly(idx: u32, n: u32, offset: u32, is_f
     // x5 = t9 - t12 (same as FFT but using IFFT's t9 and t12)
     var x5 = t9 - t12;
 
-     if (is_final_stage) {
-        let scale = 1.0 / f32(n);
-        x0 = vec2<f32>(x0.x * scale, x0.y * scale);
-        x1 = vec2<f32>(x1.x * scale, x1.y * scale);
-        x2 = vec2<f32>(x2.x * scale, x2.y * scale);
-        x3 = vec2<f32>(x3.x * scale, x3.y * scale);
-        x4 = vec2<f32>(x4.x * scale, x4.y * scale);
-        x5 = vec2<f32>(x5.x * scale, x5.y * scale);
-    }
     
     // Write to output in sequential order
     let out_idx = block_idx * 6u + offset;
