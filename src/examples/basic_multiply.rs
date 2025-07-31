@@ -58,7 +58,7 @@ async fn main() {
             | wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
-    let multiply=fft_wgpu::Multiply::new(&device, &queue, &src1, &src2);
+    let multiply=fft_wgpu::Multiply::new(&device, &queue, &src1, &src2).unwrap();
     let buffer_slice = staging_buffer.slice(..);
     queue.write_buffer(&src1, 0, bytemuck::cast_slice(data1.as_slice()));
     queue.write_buffer(&src2, 0, bytemuck::cast_slice(data2.as_slice()));

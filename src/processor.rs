@@ -4,6 +4,7 @@ use std::f64::consts::PI;
 use std::result;
 use wgpu::hal::auxil::db;
 use wgpu::util::DeviceExt;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FftRadix {
@@ -20,27 +21,88 @@ pub enum FftDirection {
     Inverse,
 }
 
+
 #[derive(Debug)]
-pub struct FftProcessor<'a> {
-    device: &'a wgpu::Device,
-    queue: &'a wgpu::Queue,
-    pipeline: wgpu::ComputePipeline,
-    bind_group: wgpu::BindGroup,
-    pub buffer_a: &'a wgpu::Buffer,
-    pub buffer_b: wgpu::Buffer,
-    twiddle_buffer: wgpu::Buffer,
-    radix: FftRadix,
-    fft_len: u32,
-    data_len: u32,
-    direction: FftDirection,
+pub enum TransposeError {
+    BufferSizeMismatch {
+        expected: u64,
+        actual: u64,
+    },
+    InvalidUsage {
+        required: wgpu::BufferUsages,
+        actual: wgpu::BufferUsages,
+    },
+    WorkgroupLimitExceeded {
+        requested: u32,
+        max: u32,
+    },
+    InvalidDimension {
+        reason: &'static str,
+    },
+    
 }
 
+impl std::fmt::Display for TransposeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::BufferSizeMismatch { expected, actual } => write!(
+                f,
+                "Buffer size mismatch. Expected: {} bytes, Actual: {} bytes",
+                expected, actual
+            ),
+            Self::InvalidUsage { required, actual } => write!(
+                f,
+                "Invalid buffer usage. Required: {:?}, Actual: {:?}",
+                required, actual
+            ),
+            Self::WorkgroupLimitExceeded { requested, max } => write!(
+                f,
+                "Workgroup count exceeded device limit. Requested: {}, Max: {}",
+                requested, max
+            ),
+            Self::InvalidDimension { reason } => write!(f, "Invalid tensor dimension: {}", reason),
+        }
+    }
+}
+
+impl std::error::Error for TransposeError {}
 #[derive(Debug)]
 pub enum FftError {
     InvalidRadix,
     InvalidLength,
     UnsupportedCombination,
+    InvalidUsage,
 }
+
+impl std::fmt::Display for FftError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::InvalidRadix => write!(f, "Invalid FFT radix specified"),
+            Self::InvalidLength => write!(f, "FFT length incompatible with selected radix"),
+            Self::UnsupportedCombination => write!(f, "Unsupported radix/length combination"),
+            Self::InvalidUsage => write!(f, "Buffer missing required usage flags"),
+        }
+    }
+}
+
+impl std::error::Error for FftError {}
+
+#[derive(Debug)]
+pub enum MultiplyError {
+    BufferSizeMismatch,
+    InvalidUsage,
+}
+
+impl std::fmt::Display for MultiplyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::BufferSizeMismatch => write!(f, "Input buffers must have the same size"),
+            Self::InvalidUsage => write!(f, "Buffer missing required usage flag"),
+        }
+    }
+}
+
+impl std::error::Error for MultiplyError {}
 
 impl FftRadix {
     /// 获取基底的数值表示
@@ -59,6 +121,41 @@ impl FftRadix {
         let base = self.value() as f32;
         (len as f32).log(base).round() as u32
     }
+
+    pub fn is_valid_radix_length(&self, len: u32) -> bool {
+        let base = self.value() as f32;
+        let log = (len as f32).log(base);
+        log.fract() < f32::EPSILON * 100.0 // 允许浮点误差
+    }
+}
+
+
+// pub struct FftProcessor<'a> {
+//     device: &'a wgpu::Device,
+//     queue: &'a wgpu::Queue,
+//     pipeline: wgpu::ComputePipeline,
+//     bind_group: wgpu::BindGroup,
+//     pub buffer_a: &'a wgpu::Buffer,
+//     pub buffer_b: wgpu::Buffer,
+//     twiddle_buffer: wgpu::Buffer,
+//     radix: FftRadix,
+//     fft_len: u32,
+//     data_len: u32,
+//     direction: FftDirection,
+// }
+#[derive(Debug)]
+pub struct FftProcessor<'a> {
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
+    pipeline: wgpu::ComputePipeline,
+    bind_group: wgpu::BindGroup,
+    pub buffer_a: &'a wgpu::Buffer,
+    pub buffer_b: wgpu::Buffer,
+    twiddle_buffer: wgpu::Buffer,
+    radix: FftRadix,
+    fft_len: u32,
+    data_len: u32,
+    direction: FftDirection,
 }
 
 impl<'a> FftProcessor<'a> {
@@ -71,10 +168,13 @@ impl<'a> FftProcessor<'a> {
         direction: FftDirection,
     ) -> Result<Self, FftError> {
         // 验证长度是否匹配基底
-        // if !radix.is_valid_length(fft_len) {
-        //     return Err(FftError::InvalidLength);
-        // }
+        if !radix.is_valid_radix_length(fft_len) {
+            return Err(FftError::InvalidLength);
+        }
 
+        if !src.usage().contains(wgpu::BufferUsages::STORAGE) {
+            return Err(FftError::InvalidUsage);
+        }
         // 创建计算管线
         let pipeline = create_pipeline(device, radix, &direction)?;
 
@@ -273,147 +373,6 @@ fn create_pipeline(
         }),
     )
 }
-
-// #[derive(Debug)]
-// pub struct FftProcessor<'a> {
-//     device: &'a wgpu::Device,
-//     queue: &'a wgpu::Queue,
-//     pipeline: wgpu::ComputePipeline,
-//     bind_group: wgpu::BindGroup,
-//     pub buffer_a: &'a wgpu::Buffer,
-//     pub buffer_b: wgpu::Buffer,
-//     twiddle_buffer: wgpu::Buffer,
-//     //pub round_num: wgpu::Buffer,
-//     // pub fft_len_buf: wgpu::Buffer,
-//     pub fft_len: u32,
-//     pub data_len: u32,
-//     direction: FftDirection,
-// }
-
-// impl<'a> FftProcessor<'a> {
-//     pub fn new(
-//         device: &'a wgpu::Device,
-//         queue: &'a wgpu::Queue,
-//         src: &'a wgpu::Buffer,
-//         fft_len: u32,
-//         direction: FftDirection,
-//     ) -> Self {
-//         let pipeline = match direction {
-//             FftDirection::Forward => prepare_cs_model_forward(device),
-//             FftDirection::Inverse => prepare_cs_model_backward(device),
-//         };
-//         let data_len = src.size();
-//         let data_len_u32 = data_len as u32;
-//         let buffer_a = src;
-
-//         let buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
-//             label: None,
-//             size: data_len,
-//             usage: wgpu::BufferUsages::COPY_DST
-//                 | wgpu::BufferUsages::COPY_SRC
-//                 | wgpu::BufferUsages::STORAGE,
-//             mapped_at_creation: false,
-//         });
-
-//         let n = fft_len as usize;
-//         let mut twiddles = Vec::with_capacity(n / 2);
-
-//         for k in 0..n / 2 {
-//             let theta = -2.0 * PI * (k as f64) / (n as f64);
-//             twiddles.push(Complex::new(theta.cos() as f32, theta.sin() as f32));
-//         }
-
-//         let twiddle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-//             label: Some("Twiddle Buffer"),
-//             contents: bytemuck::cast_slice(&twiddles),
-//             usage: wgpu::BufferUsages::STORAGE,
-//         });
-
-//         let bind_group_forward = device.create_bind_group(&wgpu::BindGroupDescriptor {
-//             label: None,
-//             layout: &pipeline.get_bind_group_layout(0),
-//             entries: &[
-//                 wgpu::BindGroupEntry {
-//                     binding: 0,
-//                     resource: buffer_a.as_entire_binding(),
-//                 },
-//                 wgpu::BindGroupEntry {
-//                     binding: 1,
-//                     resource: buffer_b.as_entire_binding(),
-//                 },
-//                 wgpu::BindGroupEntry {
-//                     binding: 2,
-//                     resource: twiddle_buffer.as_entire_binding(),
-//                 },
-//             ],
-//         });
-
-//         Self {
-//             device,
-//             queue,
-//             pipeline,
-//             bind_group: bind_group_forward,
-
-//             buffer_a,
-//             buffer_b,
-//             twiddle_buffer,
-//             fft_len,
-//             data_len: data_len_u32, //round_num,
-//             direction,              // fft_len_buf,
-//         }
-//     }
-
-//     pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
-//         // let bind_group_forward = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-//         //     label: None,
-//         //     layout: &self.pipeline.get_bind_group_layout(0),
-//         //     entries: &[
-//         //         wgpu::BindGroupEntry {
-//         //             binding: 0,
-//         //             resource: self.buffer_a.as_entire_binding(),
-//         //         },
-//         //         wgpu::BindGroupEntry {
-//         //             binding: 1,
-//         //             resource: self.buffer_b.as_entire_binding(),
-//         //         },
-//         //         wgpu::BindGroupEntry {
-//         //             binding: 2,
-//         //             resource: self.twiddle_buffer.as_entire_binding(),
-//         //         },
-//         //     ],
-//         // });
-//         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-//             label: None,
-//             timestamp_writes: None,
-//         });
-
-//         cpass.set_pipeline(&self.pipeline);
-//         cpass.set_bind_group(0, &self.bind_group, &[]);
-
-//         let x = (self.fft_len / 2 / 64).max(1); //每个x对应一组fft运算
-//         //let x =self.data_len/self.fft_len;
-//         let y = (self.buffer_a.size() / 8 / self.fft_len as u64) as u32; //一个data中有2个u32，一个u32有4个byte
-//         //let y=1;
-//         let z = 1;
-
-//         // dbg!(self);
-
-//         cpass.set_push_constants(0, &self.fft_len.to_le_bytes());
-//         //let i: u32 = 0;
-//         for i in 0..(self.fft_len as f32).log2().round() as u32 {
-//             cpass.set_push_constants(4, &i.to_le_bytes());
-//             cpass.dispatch_workgroups(x, y, z);
-//         }
-//         if ((self.fft_len as f32).log2().round() as usize) % 2 == 0 {
-//             self.buffer_a
-//         } else {
-//             &self.buffer_b
-//         }
-//     }
-//     pub fn get_output_buffer(&self) -> &wgpu::Buffer {
-//         &self.buffer_b
-//     }
-// }
 
 #[derive(Debug)]
 pub struct Forward<'a> {
@@ -1181,12 +1140,10 @@ pub struct Multiply<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
-    //bind_group: wgpu::BindGroup,
+    bind_group: wgpu::BindGroup,
     buffer_a: &'a wgpu::Buffer,
     buffer_b: &'a wgpu::Buffer,
     pub result: wgpu::Buffer,
-    // pub round_num: wgpu::Buffer,
-    //pub fft_len_buf: wgpu::Buffer,
 }
 
 impl<'a> Multiply<'a> {
@@ -1195,18 +1152,24 @@ impl<'a> Multiply<'a> {
         queue: &'a wgpu::Queue,
         src: &'a wgpu::Buffer,
         src2: &'a wgpu::Buffer,
-    ) -> Self {
+    ) -> Result<Self, MultiplyError> {
         let pipeline_multiply = prepare_cs_model_multiply(device);
+        if src.size() != src2.size() {
+            return Err(MultiplyError::BufferSizeMismatch);
+        }
+
+        let required = wgpu::BufferUsages::STORAGE;
+        if !src.usage().contains(required) || !src2.usage().contains(required) {
+            return Err(MultiplyError::InvalidUsage);
+        }
 
         let data_len = src.size();
 
-        let buffer_a = src;
-        let buffer_b = src2;
         let result = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: data_len,
             usage: wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC
+                //| wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -1218,11 +1181,11 @@ impl<'a> Multiply<'a> {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: buffer_a.as_entire_binding(),
+                    resource: src.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: buffer_b.as_entire_binding(),
+                    resource: src2.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -1231,36 +1194,36 @@ impl<'a> Multiply<'a> {
             ],
         });
 
-        Self {
+        Ok(Self {
             device,
             queue,
             pipeline: pipeline_multiply,
-            //bind_group: bind_group_multiply,
-            buffer_a,
-            buffer_b,
+            bind_group: bind_group_multiply,
+            buffer_a: src,
+            buffer_b: src2,
             result,
-        }
+        })
     }
 
     pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
-        let bind_group_multiply = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.buffer_a.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.buffer_b.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.result.as_entire_binding(),
-                },
-            ],
-        });
+        // let bind_group_multiply = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label: None,
+        //     layout: &self.pipeline.get_bind_group_layout(0),
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: self.buffer_a.as_entire_binding(),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: self.buffer_b.as_entire_binding(),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 2,
+        //             resource: self.result.as_entire_binding(),
+        //         },
+        //     ],
+        // });
 
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
@@ -1268,7 +1231,7 @@ impl<'a> Multiply<'a> {
         });
 
         cpass.set_pipeline(&self.pipeline);
-        cpass.set_bind_group(0, &bind_group_multiply, &[]);
+        cpass.set_bind_group(0, &self.bind_group, &[]);
         let workgroup_len = 64;
         let total_elements = (self.buffer_a.size() / 8) as u32;
         let x = 1024 / workgroup_len;
@@ -1281,6 +1244,9 @@ impl<'a> Multiply<'a> {
         cpass.dispatch_workgroups(x, y, z);
         // }
 
+        &self.result
+    }
+    pub fn get_output_buffer(&self) -> &wgpu::Buffer {
         &self.result
     }
 }
@@ -1354,12 +1320,10 @@ pub struct IntegratedMultiply<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
-    //bind_group: wgpu::BindGroup,
+    bind_group: wgpu::BindGroup,
     buffer: &'a wgpu::Buffer,
     pub result: wgpu::Buffer,
     pub fft_len: u32,
-    // pub round_num: wgpu::Buffer,
-    //pub fft_len_buf: wgpu::Buffer,
 }
 
 impl<'a> IntegratedMultiply<'a> {
@@ -1368,7 +1332,11 @@ impl<'a> IntegratedMultiply<'a> {
         queue: &'a wgpu::Queue,
         src: &'a wgpu::Buffer,
         fft_len: u32,
-    ) -> Self {
+    ) -> Result<Self, MultiplyError> {
+        let required_usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+        if !src.usage().contains(required_usage) {
+            return Err(MultiplyError::InvalidUsage);
+        }
         let pipeline_integratedmultiply = prepare_cs_model_integratedmultiply(device);
 
         let data_len = src.size() - (fft_len as u64 * 8);
@@ -1378,7 +1346,7 @@ impl<'a> IntegratedMultiply<'a> {
             label: None,
             size: data_len,
             usage: wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC
+                //| wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -1399,40 +1367,24 @@ impl<'a> IntegratedMultiply<'a> {
             ],
         });
 
-        Self {
+        Ok(Self {
             device,
             queue,
             pipeline: pipeline_integratedmultiply,
-            //bind_group: bind_group_multiply,
+            bind_group: bind_group_multiply,
             buffer,
             result,
             fft_len,
-        }
+        })
     }
 
     pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
-        let bind_group_integratedmultiply =
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &self.pipeline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: self.result.as_entire_binding(),
-                    },
-                ],
-            });
-
         let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
             timestamp_writes: None,
         });
         compute_pass.set_pipeline(&self.pipeline);
-        compute_pass.set_bind_group(0, &bind_group_integratedmultiply, &[]);
+        compute_pass.set_bind_group(0, &self.bind_group, &[]);
 
         let workgroup_len = 64;
         let data_len = self.buffer.size() / 8;
@@ -1442,6 +1394,10 @@ impl<'a> IntegratedMultiply<'a> {
         compute_pass.set_push_constants(0, &self.fft_len.to_le_bytes());
         compute_pass.dispatch_workgroups(x, y, z);
 
+        &self.result
+    }
+
+    pub fn get_output_buffer(&self) -> &wgpu::Buffer {
         &self.result
     }
 }
@@ -1547,12 +1503,27 @@ impl<'a> TransposeProcessor<'a> {
         queue: &'a wgpu::Queue,
         input_buffer: &'a wgpu::Buffer,
         dims: &[u32],
-    ) -> Self {
-        let rank = dims.len();
-        assert!(rank > 0, "张量维度不能为空");
+    ) -> Result<Self, TransposeError> {
+        if dims.is_empty() {
+            return Err(TransposeError::InvalidDimension {
+                reason: "dimensions cannot be empty",
+            });
+        }
 
+        if dims.iter().any(|&d| d == 0) {
+            return Err(TransposeError::InvalidDimension {
+                reason: "dimension size cannot be zero",
+            });
+        }
         let total_elements = dims.iter().product::<u32>() as usize;
         let buffer_size = input_buffer.size();
+        let required_usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+        if !input_buffer.usage().contains(required_usage) {
+            return Err(TransposeError::InvalidUsage {
+                required: required_usage,
+                actual: input_buffer.usage(),
+            });
+        }
 
         // 内部创建输出缓冲区
         let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1680,7 +1651,7 @@ impl<'a> TransposeProcessor<'a> {
             ],
         });
 
-        Self {
+        Ok(Self {
             device,
             queue,
             pipeline,
@@ -1692,16 +1663,9 @@ impl<'a> TransposeProcessor<'a> {
             output_buffer,
             dims_buffer,
             strides_buffer,
-        }
+        })
     }
 
-    /// 执行转置操作
-    ///
-    /// # 参数
-    /// * `encoder` - 命令编码器
-    ///
-    /// # 返回
-    /// 输出缓冲区的引用
     pub fn proc(&self, encoder: &mut wgpu::CommandEncoder) -> &wgpu::Buffer {
         // 创建计算通道
         let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

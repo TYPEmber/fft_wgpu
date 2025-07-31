@@ -100,7 +100,7 @@ impl<'a> MultiplyNode<'a> {
         buffer_a: &'a wgpu::Buffer,
         buffer_b: &'a wgpu::Buffer,
     ) -> Self {
-        let multiply_op = processor::Multiply::new(device, queue, buffer_a, buffer_b);
+        let multiply_op = processor::Multiply::new(device, queue, buffer_a, buffer_b).unwrap();
         Self { multiply_op }
     }
 }

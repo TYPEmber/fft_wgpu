@@ -71,7 +71,7 @@ async fn main() {
 
         let data_output = data_forward.proc(&mut encoder);
         let knl_output = knl_forward.proc(&mut encoder);
-        let multiply = fft_wgpu::Multiply::new(&device, &queue, data_output, knl_output);
+        let multiply = fft_wgpu::Multiply::new(&device, &queue, data_output, knl_output).unwrap();
 
         let result = multiply.proc(&mut encoder);
         let fft_inverse = fft_wgpu::Inverse::new(&device, &queue, result, 1024);
