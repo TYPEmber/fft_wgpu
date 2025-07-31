@@ -93,27 +93,27 @@ pub struct MultiplyNode<'a> {
     multiply_op: processor::Multiply<'a>,
 }
 
-impl<'a> MultiplyNode<'a> {
-    pub fn new(
-        device: &'a wgpu::Device,
-        queue: &'a wgpu::Queue,
-        buffer_a: &'a wgpu::Buffer,
-        buffer_b: &'a wgpu::Buffer,
-    ) -> Self {
-        let multiply_op = processor::Multiply::new(device, queue, buffer_a, buffer_b).unwrap();
-        Self { multiply_op }
-    }
-}
+// impl<'a> MultiplyNode<'a> {
+//     pub fn new(
+//         device: &'a wgpu::Device,
+//         queue: &'a wgpu::Queue,
+//         buffer_a: &'a wgpu::Buffer,
+//         buffer_b: &'a wgpu::Buffer,
+//     ) -> Self {
+//         let multiply_op = processor::Multiply::new(device, queue, buffer_a, buffer_b).unwrap();
+//         Self { multiply_op }
+//     }
+// }
 
-impl<'a> GraphNode<'a> for MultiplyNode<'a> {
-    fn run(&self, encoder: &mut wgpu::CommandEncoder) {
-        let _ = self.multiply_op.proc(encoder);
-    }
+// impl<'a> GraphNode<'a> for MultiplyNode<'a> {
+//     fn run(&self, encoder: &mut wgpu::CommandEncoder) {
+//         let _ = self.multiply_op.proc(encoder);
+//     }
 
-    fn get_output_buffer(&self) -> &wgpu::Buffer {
-        &self.multiply_op.result
-    }
-}
+//     fn get_output_buffer(&self) -> &wgpu::Buffer {
+//         &self.multiply_op.result
+//     }
+// }
 
 // --- Compute Graph ---
 pub struct ComputeGraph<'a> {

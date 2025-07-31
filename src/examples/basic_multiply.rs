@@ -1,5 +1,5 @@
 use num_complex::Complex32 as Complex;
-
+use std::sync::Arc;
 #[tokio::main]
 async fn main() {
     // Instantiates instance of WebGPU
@@ -58,14 +58,16 @@ async fn main() {
             | wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
-    let multiply=fft_wgpu::Multiply::new(&device, &queue, &src1, &src2).unwrap();
+    let device_arc= Arc::new(device);
+    let queue_arc = Arc::new(queue);
+    let multiply=fft_wgpu::Multiply::new(device_arc.clone(), queue_arc.clone(), &src1, &src2).unwrap();
     let buffer_slice = staging_buffer.slice(..);
-    queue.write_buffer(&src1, 0, bytemuck::cast_slice(data1.as_slice()));
-    queue.write_buffer(&src2, 0, bytemuck::cast_slice(data2.as_slice()));
+    queue_arc.clone().write_buffer(&src1, 0, bytemuck::cast_slice(data1.as_slice()));
+    queue_arc.clone().write_buffer(&src2, 0, bytemuck::cast_slice(data2.as_slice()));
         // A command encoder executes one or many pipelines.
         // It is to WebGPU what a command buffer is to Vulkan.
         let mut encoder =
-          device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+          device_arc.clone().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         let output = multiply.proc(&mut encoder);
         //let output=fft_forward.buffer_a;
@@ -87,7 +89,7 @@ async fn main() {
         //     (len * std::mem::size_of::<Complex>()) as u64,
         // );
 
-        queue.submit(Some(encoder.finish()));
+        queue_arc.clone().submit(Some(encoder.finish()));
        // queue.submit(None);
         // let rn = fft_forward.round_num.slice(..);
 
@@ -101,7 +103,7 @@ async fn main() {
         // Note that we're not calling `.await` here.
         
          buffer_slice.map_async(wgpu::MapMode::Read, move |_| {});
-         device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+         device_arc.clone().poll(wgpu::Maintain::wait()).panic_on_timeout();
          let data = buffer_slice.get_mapped_range();
        
         

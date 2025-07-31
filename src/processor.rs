@@ -160,12 +160,13 @@ pub struct FftProcessor<'a> {
 
 impl<'a> FftProcessor<'a> {
     pub fn new(
-        radix: FftRadix,
-        device: &'a wgpu::Device,
-        queue: &'a wgpu::Queue,
+       
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
         src: &'a wgpu::Buffer,
         fft_len: u32,
         direction: FftDirection,
+        radix: FftRadix,
     ) -> Result<Self, FftError> {
         // 验证长度是否匹配基底
         if !radix.is_valid_radix_length(fft_len) {
@@ -175,15 +176,16 @@ impl<'a> FftProcessor<'a> {
         if !src.usage().contains(wgpu::BufferUsages::STORAGE) {
             return Err(FftError::InvalidUsage);
         }
+        let device_arc=device.clone();
         // 创建计算管线
-        let pipeline = create_pipeline(device, radix, &direction)?;
+        let pipeline = create_pipeline(device_arc, radix, &direction)?;
 
         let data_len = src.size();
         let data_len_u32 = data_len as u32;
         let buffer_a = src;
-
+        let device_arc=device.clone();
         // 创建输出缓冲区
-        let buffer_b = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer_b = device_arc.create_buffer(&wgpu::BufferDescriptor {
             label: Some("FFT Output Buffer"),
             size: data_len,
             usage: wgpu::BufferUsages::COPY_DST
@@ -283,7 +285,7 @@ impl<'a> FftProcessor<'a> {
 
 /// 统一创建计算管线
 fn create_pipeline(
-    device: &wgpu::Device,
+    device: Arc<wgpu::Device>,
     radix: FftRadix,
     direction: &FftDirection,
 ) -> Result<wgpu::ComputePipeline, FftError> {
@@ -1137,8 +1139,8 @@ fn prepare_cs_model_onlyinverse(device: &wgpu::Device) -> wgpu::ComputePipeline 
 }
 
 pub struct Multiply<'a> {
-    device: &'a wgpu::Device,
-    queue: &'a wgpu::Queue,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
     buffer_a: &'a wgpu::Buffer,
@@ -1148,12 +1150,12 @@ pub struct Multiply<'a> {
 
 impl<'a> Multiply<'a> {
     pub fn new(
-        device: &'a wgpu::Device,
-        queue: &'a wgpu::Queue,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
         src: &'a wgpu::Buffer,
         src2: &'a wgpu::Buffer,
     ) -> Result<Self, MultiplyError> {
-        let pipeline_multiply = prepare_cs_model_multiply(device);
+        let pipeline_multiply = prepare_cs_model_multiply(device.clone());
         if src.size() != src2.size() {
             return Err(MultiplyError::BufferSizeMismatch);
         }
@@ -1165,7 +1167,7 @@ impl<'a> Multiply<'a> {
 
         let data_len = src.size();
 
-        let result = device.create_buffer(&wgpu::BufferDescriptor {
+        let result = device.clone().create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: data_len,
             usage: wgpu::BufferUsages::COPY_DST
@@ -1251,7 +1253,8 @@ impl<'a> Multiply<'a> {
     }
 }
 
-fn prepare_cs_model_multiply(device: &wgpu::Device) -> wgpu::ComputePipeline {
+fn prepare_cs_model_multiply( device: Arc<wgpu::Device>
+   ) -> wgpu::ComputePipeline {
     // Loads the shader from WGSL
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
@@ -1317,8 +1320,8 @@ fn prepare_cs_model_multiply(device: &wgpu::Device) -> wgpu::ComputePipeline {
 }
 
 pub struct IntegratedMultiply<'a> {
-    device: &'a wgpu::Device,
-    queue: &'a wgpu::Queue,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
     buffer: &'a wgpu::Buffer,
@@ -1328,8 +1331,8 @@ pub struct IntegratedMultiply<'a> {
 
 impl<'a> IntegratedMultiply<'a> {
     pub fn new(
-        device: &'a wgpu::Device,
-        queue: &'a wgpu::Queue,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
         src: &'a wgpu::Buffer,
         fft_len: u32,
     ) -> Result<Self, MultiplyError> {
@@ -1337,12 +1340,14 @@ impl<'a> IntegratedMultiply<'a> {
         if !src.usage().contains(required_usage) {
             return Err(MultiplyError::InvalidUsage);
         }
-        let pipeline_integratedmultiply = prepare_cs_model_integratedmultiply(device);
+        let device_arc=device.clone();
+        let pipeline_integratedmultiply = prepare_cs_model_integratedmultiply(device_arc);
 
         let data_len = src.size() - (fft_len as u64 * 8);
 
         let buffer = src;
-        let result = device.create_buffer(&wgpu::BufferDescriptor {
+        let device_arc=device.clone();
+        let result = device_arc.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: data_len,
             usage: wgpu::BufferUsages::COPY_DST
@@ -1402,7 +1407,8 @@ impl<'a> IntegratedMultiply<'a> {
     }
 }
 
-fn prepare_cs_model_integratedmultiply(device: &wgpu::Device) -> wgpu::ComputePipeline {
+fn prepare_cs_model_integratedmultiply( device: Arc<wgpu::Device>
+) -> wgpu::ComputePipeline {
     // Loads the shader from WGSL
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
@@ -1469,8 +1475,8 @@ use std::borrow::Cow;
 /// 每个处理器实例维护自己的维度信息和转置逻辑，
 /// 持有输入缓冲区的引用并内部创建输出缓冲区。
 pub struct TransposeProcessor<'a> {
-    device: &'a wgpu::Device,
-    queue: &'a wgpu::Queue,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
 
@@ -1499,8 +1505,8 @@ impl<'a> TransposeProcessor<'a> {
     /// # 返回
     /// 新的TransposeProcessor实例
     pub fn new(
-        device: &'a wgpu::Device,
-        queue: &'a wgpu::Queue,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
         input_buffer: &'a wgpu::Buffer,
         dims: &[u32],
     ) -> Result<Self, TransposeError> {

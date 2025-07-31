@@ -57,7 +57,7 @@ async fn main() {
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     let output = fft_forward.proc(&mut encoder);
-    let integratedmultiply=fft_wgpu::IntegratedMultiply::new(&device, &queue, &output, fft_len);
+    let integratedmultiply=fft_wgpu::IntegratedMultiply::new(&device, &queue, &output, fft_len).unwrap();
     let mul_result=integratedmultiply.proc(&mut encoder);
     let fft_inverse = fft_wgpu::Inverse::new(&device, &queue, &mul_result, 512);
     let output = fft_inverse.proc(&mut encoder);

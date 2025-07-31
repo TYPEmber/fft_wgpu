@@ -55,7 +55,7 @@ async fn main() {
 
     // 创建FFT处理器
     let fft1 = fft_wgpu::Forward::new(&device, &queue, &input_buffer, 512);
-    let transpose1 = fft_wgpu::TransposeProcessor::new(&device, &queue, &fft1.buffer_b, &dims);
+    let transpose1 = fft_wgpu::TransposeProcessor::new(&device, &queue, &fft1.buffer_b, &dims).unwrap();
     // 创建第一个转置处理器
 
     let fft2 = fft_wgpu::Forward::new(&device, &queue, &transpose1.output_buffer, 512);
@@ -67,7 +67,7 @@ async fn main() {
         &queue,
         &input_buffer,
         transpose1.get_output_dims(),
-    );
+    ).unwrap();
 
     // 开始计时
     let timer = std::time::Instant::now();
