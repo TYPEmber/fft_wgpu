@@ -271,11 +271,11 @@ impl SegmentedTransfer {
         for i in 0..self.download_segments {
             // 如果不是最后一段，提前开始下一段的操作
             // 等待并处理当前段
-            let (tx, rx) = mpsc::channel();
+            let (tx, rx) = oneshot::channel();
             self.download_buffers[i]
                 .slice(..)
                 .map_async(wgpu::MapMode::Read, move |r| {
-                    tx.send(r).unwrap();
+                    let _=tx.send(r);
                 });
 
             while !self.device.poll(wgpu::MaintainBase::Poll).is_queue_empty() {}
@@ -295,8 +295,7 @@ impl SegmentedTransfer {
                 );
                 self.queue.submit(Some(encoder.finish()));
             }
-
-            if rx.recv().unwrap().is_ok() {
+            if let Ok(Ok(_)) = rx.await {
                 let view = self.download_buffers[i].slice(..).get_mapped_range();
                 output_slice[result_offset..result_offset + self.download_elements[i]]
                     .copy_from_slice(&bytemuck::cast_slice(&view)[..self.download_elements[i]]);
