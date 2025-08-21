@@ -5,13 +5,16 @@ use wgpu::*;
 
 pub mod processor;
 pub use processor::*;
-pub mod wgpu_helper;
 pub mod compute_graph;
+pub mod wgpu_helper;
 pub use compute_graph::*;
 pub mod planner;
 pub use planner::*;
 pub mod segmented_transfer;
 pub use segmented_transfer::SegmentedTransfer;
+
+pub mod draft_fft;
+pub mod typed_buffer;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -89,7 +92,11 @@ fn prepare_cs_model(device: &Device) -> ComputePipeline {
 
 pub async fn basic() {
     let (device, queue) = prepare_gpu().await.unwrap();
+    let timer = std::time::Instant::now();
+
     let pipeline = prepare_cs_model(&device);
+
+    dbg!(timer.elapsed());
 
     let data = vec![Complex::new(1.0, 0.0); 512 * 500 * 5];
     let fft_len = 512;
@@ -146,6 +153,7 @@ pub async fn basic() {
         mapped_at_creation: false,
     });
 
+    let timer = std::time::Instant::now();
     // Instantiates the bind group, once again specifying the binding of buffers.
     let bind_group_layout = pipeline.get_bind_group_layout(0);
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -170,6 +178,7 @@ pub async fn basic() {
             },
         ],
     });
+    dbg!(timer.elapsed());
 
     let mut ans = vec![Complex::zero(); len];
 
