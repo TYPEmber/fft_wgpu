@@ -1,8 +1,7 @@
 use crate::typed_buffer;
 use num_complex::Complex;
 use wgpu::{
-    BindGroup, BufferUsages, CommandEncoder, CommandEncoderDescriptor, ComputePass,
-    ComputePipeline, Device, Queue,
+    BindGroup, BufferUsages, CommandEncoderDescriptor, ComputePipeline, Device, Queue,
     naga::FastHashMap,
     util::{self, DeviceExt},
 };
@@ -78,24 +77,28 @@ impl<'a> Processor<'a> {
         let bind_group: &BindGroup = self
             .bind_group_cache
             .entry([input as *const _ as usize, output as *const _ as usize])
-            .or_insert(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("FFT Bind Group"),
-                layout: &self.pipeline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: input.inner.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: output.inner.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.twiddles.inner.as_entire_binding(),
-                    },
-                ],
-            }));
+            // Do not use `or_insert`
+            // It will new default value everytime.
+            .or_insert_with(|| {
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("FFT Bind Group"),
+                    layout: &self.pipeline.get_bind_group_layout(0),
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: input.inner.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: output.inner.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: self.twiddles.inner.as_entire_binding(),
+                        },
+                    ],
+                })
+            });
 
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
