@@ -4,12 +4,12 @@ use num_complex::Complex32 as Complex;
 #[tokio::main]
 async fn main() {
     // Instantiates instance of WebGPU
-    //  let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-    // backends: wgpu::Backends::VULKAN,         //默认后端（着色器等）
-    // //默认dx12编译器
-    // flags: wgpu::InstanceFlags::empty(),      //没有额外的标志，行为
+    // let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    //     backends: wgpu::Backends::VULKAN, //默认后端（着色器等）
+    //     //默认dx12编译器
+    //     flags: wgpu::InstanceFlags::empty(), //没有额外的标志，行为
 
-    // backend_options: Default::default(),
+    //     backend_options: Default::default(),
     // });
     let instance = wgpu::Instance::default();
     // `request_adapter` instantiates the general connection to the GPU
@@ -29,8 +29,8 @@ async fn main() {
         .request_device(
             &wgpu::DeviceDescriptor {
                 //  required_features: wgpu::Features::empty(),
-                // required_features: adapter.features(),
-                required_features: wgpu::Features::PUSH_CONSTANTS,
+                required_features: adapter.features(),
+                // required_features: wgpu::Features::PUSH_CONSTANTS,
                 required_limits: adapter.limits(),
                 label: Some("GPU Device"),
                 ..Default::default()
@@ -39,6 +39,9 @@ async fn main() {
         )
         .await
         .unwrap();
+
+    let supports_timestamps = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+    println!("设备是否支持时间戳查询: {}", supports_timestamps);
 
     let data = vec![Complex::new(5.0, 0.0); 512 * 500 * 5];
     let len = data.len();
@@ -64,6 +67,12 @@ async fn main() {
         label: None,
         size: (len * std::mem::size_of::<Complex>()) as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let upload_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (len * std::mem::size_of::<Complex>()) as u64,
+        usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
     //staging_buffer.as_hal(hal_buffer_callback)
@@ -111,16 +120,68 @@ async fn main() {
     // let fft_forward_2 = fft_wgpu::Forward::new(&device, &queue, &src, 16);
     let buffer_slice = staging_buffer.slice(..);
 
+    let upload_buffer_slice = upload_buffer.slice(..);
+
+    let ts_query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
+        label: Some("Timestamp Query Set"),
+        ty: wgpu::QueryType::Timestamp,
+        count: 4,
+    });
+
+    let ts_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Timestamp Buffer"),
+        size: 8 * 4, // 8字节 * 4个时间戳
+        usage: wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::MAP_READ
+            | wgpu::BufferUsages::QUERY_RESOLVE,
+        mapped_at_creation: false,
+    });
+
     let timer = std::time::Instant::now();
 
-    for _ in 0..1000 {
-        queue.write_buffer(&input_arr.inner, 0, bytemuck::cast_slice(data.as_slice()));
+    let query_flag = false;
+
+    for i in 0..1000 {
+        // queue.write_buffer(&input_arr.inner, 0, bytemuck::cast_slice(data.as_slice()));
         // let timer = std::time::Instant::now();
-        queue.submit([]);
+        // queue.submit([]);
         // dbg!(timer.elapsed());
+        {
+            if i == 0 {
+                upload_buffer_slice.map_async(wgpu::MapMode::Write, |_| {});
+                while !device.poll(wgpu::MaintainBase::Poll).is_queue_empty() {
+                    std::thread::sleep(std::time::Duration::from_micros(1));
+                }
+                let timer = std::time::Instant::now();
+
+                upload_buffer_slice
+                    .get_mapped_range_mut()
+                    .copy_from_slice(bytemuck::cast_slice(data.as_slice()));
+                // dbg!(timer.elapsed());
+                upload_buffer.unmap();
+            }
+
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            encoder.write_timestamp(&ts_query_set, 0);
+            encoder.copy_buffer_to_buffer(
+                &upload_buffer,
+                0,
+                &input_arr.inner,
+                0,
+                input_arr.inner.size(),
+            );
+            encoder.write_timestamp(&ts_query_set, 1);
+
+            queue.submit(Some(encoder.finish()));
+        }
 
         fft_forward.proc(&input_arr, &output_arr);
         // fft_inverse.proc(&output_arr, &input_arr);
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+        encoder.write_timestamp(&ts_query_set, 2);
 
         // 对耗时无负面影响
         // 说明确实可以被掩盖
@@ -132,8 +193,8 @@ async fn main() {
         //     std::thread::yield_now();
         // }
 
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        // let mut encoder =
+        //     device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         encoder.copy_buffer_to_buffer(
             &output_arr.inner,
@@ -143,18 +204,81 @@ async fn main() {
             output_arr.inner.size(),
         );
 
+        encoder.write_timestamp(&ts_query_set, 3);
+
         queue.submit(Some(encoder.finish()));
 
+        // 下一次的数据
+        {
+            let (tx, rx) = std::sync::mpsc::channel();
+            upload_buffer_slice.map_async(wgpu::MapMode::Write, move |_| {
+                let _ = tx.send(());
+            });
+
+            // 不能用 wait 因为 wait 会等待 queue 里的所有指令都完成
+            // 这里只需要等待 map_async 完成即可
+            device.poll(wgpu::MaintainBase::Poll);
+            while rx.try_recv().is_err() {
+                // std::thread::sleep(std::time::Duration::from_micros(1));
+                device.poll(wgpu::MaintainBase::Poll);
+            }
+
+            let timer = std::time::Instant::now();
+
+            upload_buffer_slice
+                .get_mapped_range_mut()
+                .copy_from_slice(bytemuck::cast_slice(data.as_slice()));
+            // dbg!(timer.elapsed());
+            upload_buffer.unmap();
+        }
+
         buffer_slice.map_async(wgpu::MapMode::Read, move |_| {});
-        device.poll(wgpu::Maintain::wait()).panic_on_timeout();
-        let data1 = buffer_slice.get_mapped_range();
+        // device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+        while !device.poll(wgpu::MaintainBase::Poll).is_queue_empty() {
+            // std::thread::sleep(std::time::Duration::from_micros(1));
+        }
 
-        ans.copy_from_slice(bytemuck::cast_slice(&data1));
+        let timer = std::time::Instant::now();
+        ans.copy_from_slice(bytemuck::cast_slice(&buffer_slice.get_mapped_range()));
+        // dbg!(timer.elapsed());
 
-        drop(data1);
         staging_buffer.unmap();
+
+        if query_flag {
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+            encoder.resolve_query_set(&ts_query_set, 0..4, &ts_buffer, 0);
+            queue.submit(Some(encoder.finish()));
+
+            ts_buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+            // while !device.poll(wgpu::MaintainBase::Poll).is_queue_empty() {
+            //     std::thread::sleep(std::time::Duration::from_micros(1));
+            // }
+            device.poll(wgpu::MaintainBase::Wait).panic_on_timeout();
+
+            let ts = ts_buffer.slice(..).get_mapped_range();
+            let tss: &[u64] = bytemuck::cast_slice(&ts);
+            // dbg!(tss);
+            println!(
+                "PCIe upload bandwith: {} GB/s, dur: {} us",
+                (input_arr.inner.size() as f64 / (1024.0 * 1024.0 * 1024.0))
+                    / ((tss[1] - tss[0]) as f64 / 1e9),
+                (tss[1] - tss[0]) as f64 / 1e3
+            );
+            println!("Calculate: {} us", (tss[2] - tss[1]) as f64 / 1e3);
+            println!(
+                "PCIe download bandwith: {} GB/s, dur: {} us",
+                (input_arr.inner.size() as f64 / (1024.0 * 1024.0 * 1024.0))
+                    / ((tss[3] - tss[2]) as f64 / 1e9),
+                (tss[3] - tss[2]) as f64 / 1e3
+            );
+            drop(ts);
+            ts_buffer.unmap();
+        }
     }
     dbg!(timer.elapsed());
+
     // dbg!(&ans[0..10]);
 }
 
