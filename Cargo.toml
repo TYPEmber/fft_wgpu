@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wgpu = "*"
+wgpu = "24"
 ndarray = "*"
 ndarray-conv = "*"
 bytemuck = { version = "*", features = ["derive"] }
@@ -22,6 +22,10 @@ ash = "0.38.0"
 [[example]]
 name = "basic"
 path = "src/examples/basic.rs"
+
+[[example]]
+name = "draft_basic"
+path = "src/examples/draft_basic.rs"
 
 [[example]]
 name = "basic_inverse"
