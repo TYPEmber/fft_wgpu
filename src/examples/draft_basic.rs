@@ -75,7 +75,7 @@ async fn main() {
             | wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
-    let input_arr = typed_buffer::Array::new(src);
+    let input_arr: typed_buffer::Array<Complex> = typed_buffer::Array::new(src);
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: (len * std::mem::size_of::<Complex>()) as u64,
@@ -84,7 +84,7 @@ async fn main() {
             | wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
-    let output_arr = typed_buffer::Array::new(output);
+    let output_arr: typed_buffer::Array<Complex> = typed_buffer::Array::new(output);
 
     let mut fft_forward = fft_wgpu::draft_fft::Processor::new(
         &device,
@@ -119,11 +119,21 @@ async fn main() {
         queue.submit([]);
         // dbg!(timer.elapsed());
 
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
         fft_forward.proc(&input_arr, &output_arr);
         // fft_inverse.proc(&output_arr, &input_arr);
+
+        // 对耗时无负面影响
+        // 说明确实可以被掩盖
+        // let timer = std::time::Instant::now();
+        // loop {
+        //     if timer.elapsed().as_micros() > 2000 {
+        //         break;
+        //     }
+        //     std::thread::yield_now();
+        // }
+
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         encoder.copy_buffer_to_buffer(
             &output_arr.inner,
@@ -139,26 +149,13 @@ async fn main() {
         device.poll(wgpu::Maintain::wait()).panic_on_timeout();
         let data1 = buffer_slice.get_mapped_range();
 
-        // Gets contents of buffer
-
-        // // Since contents are got in bytes, this converts these bytes back to u32
-        // bytemuck::cast_slice(&data1).clone_into(&mut ans);
         ans.copy_from_slice(bytemuck::cast_slice(&data1));
 
-        // println!("{:?}", &ans[..10]);
-        //println!("{:?}", &ans[512..520]);
-
-        // With the current interface, we have to make sure all mapped views are
-        // dropped before we unmap the buffer.
         drop(data1);
-        staging_buffer.unmap(); // Unmaps buffer from memory
-        // If you are familiar with C++ these 2 lines can be thought of similarly to:
-        //   delete myPointer;
-        //   myPointer = NULL;
-        // It effectively frees the memory
+        staging_buffer.unmap();
     }
-    dbg!(ans[0..10].to_vec());
     dbg!(timer.elapsed());
+    // dbg!(&ans[0..10]);
 }
 
 #[cfg(test)]
