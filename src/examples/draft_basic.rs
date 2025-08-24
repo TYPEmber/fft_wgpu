@@ -1,0 +1,415 @@
+use fft_wgpu::typed_buffer;
+use num_complex::Complex32 as Complex;
+
+#[tokio::main]
+async fn main() {
+    // Instantiates instance of WebGPU
+    // let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    //     backends: wgpu::Backends::VULKAN, //默认后端（着色器等）
+    //     //默认dx12编译器
+    //     flags: wgpu::InstanceFlags::empty(), //没有额外的标志，行为
+
+    //     backend_options: Default::default(),
+    // });
+    let instance = wgpu::Instance::default();
+    // `request_adapter` instantiates the general connection to the GPU
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    //dbg!(adapter.limits());
+
+    // `request_device` instantiates the feature specific connection to the GPU, defining some parameters,
+    //  `features` being the available features.
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                //  required_features: wgpu::Features::empty(),
+                required_features: adapter.features(),
+                // required_features: wgpu::Features::PUSH_CONSTANTS,
+                required_limits: adapter.limits(),
+                label: Some("GPU Device"),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let supports_timestamps = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+    println!("设备是否支持时间戳查询: {}", supports_timestamps);
+
+    let data = vec![Complex::new(5.0, 0.0); 512 * 500 * 5];
+    let len = data.len();
+    //  let a:u8=1.0;
+    // let buffer=device.create_buffer_from_hal{
+
+    // let mut data_cpu = data
+    //     .iter()
+    //     .map(|c| rustfft::num_complex::Complex::new(c.re, 0.0))
+    //     .collect::<Vec<_>>();
+    // let fft = rustfft::FftPlanner::new().plan_fft_forward(16);
+    // fft.process(&mut data_cpu);
+    // fft.process(&mut data_cpu);
+    // println!("{:?}", &data_cpu[..]);
+
+    let mut ans = vec![Complex::ZERO; len];
+
+    // Instantiates buffer without data.
+    // `usage` of buffer specifies how it can be used:
+    //   `BufferUsages::MAP_READ` allows it to be read (outside the shader).
+    //   `BufferUsages::COPY_DST` allows it to be the destination of the copy.
+    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (len * std::mem::size_of::<Complex>()) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let upload_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (len * std::mem::size_of::<Complex>()) as u64,
+        usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    //staging_buffer.as_hal(hal_buffer_callback)
+    let src = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (len * std::mem::size_of::<Complex>()) as u64,
+        usage: wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+    let input_arr: typed_buffer::Array<Complex> = typed_buffer::Array::new(src);
+    let output = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (len * std::mem::size_of::<Complex>()) as u64,
+        usage: wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+    let output_arr: typed_buffer::Array<Complex> = typed_buffer::Array::new(output);
+
+    let mut fft_forward = fft_wgpu::draft_fft::Processor::new(
+        &device,
+        &queue,
+        fft_wgpu::draft_fft::Config {
+            fft_len: 512,
+            recipe: fft_wgpu::draft_fft::Recipe::Radix2,
+            direction: fft_wgpu::draft_fft::Direction::Forward,
+        },
+    )
+    .unwrap();
+    let mut fft_inverse = fft_wgpu::draft_fft::Processor::new(
+        &device,
+        &queue,
+        fft_wgpu::draft_fft::Config {
+            fft_len: 512,
+            recipe: fft_wgpu::draft_fft::Recipe::Radix2,
+            direction: fft_wgpu::draft_fft::Direction::Inverse,
+        },
+    )
+    .unwrap();
+
+    // let fft_forward = fft_wgpu::Forward::new(&device, &queue, &src, 512);
+    // let fft_forward_2 = fft_wgpu::Forward::new(&device, &queue, &src, 16);
+    let buffer_slice = staging_buffer.slice(..);
+
+    let upload_buffer_slice = upload_buffer.slice(..);
+
+    let ts_query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
+        label: Some("Timestamp Query Set"),
+        ty: wgpu::QueryType::Timestamp,
+        count: 4,
+    });
+
+    let ts_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Timestamp Buffer"),
+        size: 8 * 4, // 8字节 * 4个时间戳
+        usage: wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::MAP_READ
+            | wgpu::BufferUsages::QUERY_RESOLVE,
+        mapped_at_creation: false,
+    });
+
+    let timer = std::time::Instant::now();
+
+    let query_flag = false;
+
+    for i in 0..1000 {
+        // queue.write_buffer(&input_arr.inner, 0, bytemuck::cast_slice(data.as_slice()));
+        // let timer = std::time::Instant::now();
+        // queue.submit([]);
+        // dbg!(timer.elapsed());
+        {
+            if i == 0 {
+                upload_buffer_slice.map_async(wgpu::MapMode::Write, |_| {});
+                while !device.poll(wgpu::MaintainBase::Poll).is_queue_empty() {
+                    std::thread::sleep(std::time::Duration::from_micros(1));
+                }
+                let timer = std::time::Instant::now();
+
+                upload_buffer_slice
+                    .get_mapped_range_mut()
+                    .copy_from_slice(bytemuck::cast_slice(data.as_slice()));
+                // dbg!(timer.elapsed());
+                upload_buffer.unmap();
+            }
+
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            encoder.write_timestamp(&ts_query_set, 0);
+            encoder.copy_buffer_to_buffer(
+                &upload_buffer,
+                0,
+                &input_arr.inner,
+                0,
+                input_arr.inner.size(),
+            );
+            encoder.write_timestamp(&ts_query_set, 1);
+
+            queue.submit(Some(encoder.finish()));
+        }
+
+        fft_forward.proc(&input_arr, &output_arr);
+        // fft_inverse.proc(&output_arr, &input_arr);
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+        encoder.write_timestamp(&ts_query_set, 2);
+
+        // 对耗时无负面影响
+        // 说明确实可以被掩盖
+        // let timer = std::time::Instant::now();
+        // loop {
+        //     if timer.elapsed().as_micros() > 2000 {
+        //         break;
+        //     }
+        //     std::thread::yield_now();
+        // }
+
+        // let mut encoder =
+        //     device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+        encoder.copy_buffer_to_buffer(
+            &output_arr.inner,
+            0,
+            &staging_buffer,
+            0,
+            output_arr.inner.size(),
+        );
+
+        encoder.write_timestamp(&ts_query_set, 3);
+
+        queue.submit(Some(encoder.finish()));
+
+        // 下一次的数据
+        {
+            let (tx, rx) = std::sync::mpsc::channel();
+            upload_buffer_slice.map_async(wgpu::MapMode::Write, move |_| {
+                let _ = tx.send(());
+            });
+
+            // 不能用 wait 因为 wait 会等待 queue 里的所有指令都完成
+            // 这里只需要等待 map_async 完成即可
+            device.poll(wgpu::MaintainBase::Poll);
+            while rx.try_recv().is_err() {
+                // std::thread::sleep(std::time::Duration::from_micros(1));
+                device.poll(wgpu::MaintainBase::Poll);
+            }
+
+            let timer = std::time::Instant::now();
+
+            upload_buffer_slice
+                .get_mapped_range_mut()
+                .copy_from_slice(bytemuck::cast_slice(data.as_slice()));
+            // dbg!(timer.elapsed());
+            upload_buffer.unmap();
+        }
+
+        buffer_slice.map_async(wgpu::MapMode::Read, move |_| {});
+        // device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+        while !device.poll(wgpu::MaintainBase::Poll).is_queue_empty() {
+            // std::thread::sleep(std::time::Duration::from_micros(1));
+        }
+
+        let timer = std::time::Instant::now();
+        ans.copy_from_slice(bytemuck::cast_slice(&buffer_slice.get_mapped_range()));
+        // dbg!(timer.elapsed());
+
+        staging_buffer.unmap();
+
+        if query_flag {
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+            encoder.resolve_query_set(&ts_query_set, 0..4, &ts_buffer, 0);
+            queue.submit(Some(encoder.finish()));
+
+            ts_buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+            // while !device.poll(wgpu::MaintainBase::Poll).is_queue_empty() {
+            //     std::thread::sleep(std::time::Duration::from_micros(1));
+            // }
+            device.poll(wgpu::MaintainBase::Wait).panic_on_timeout();
+
+            let ts = ts_buffer.slice(..).get_mapped_range();
+            let tss: &[u64] = bytemuck::cast_slice(&ts);
+            // dbg!(tss);
+            println!(
+                "PCIe upload bandwith: {} GB/s, dur: {} us",
+                (input_arr.inner.size() as f64 / (1024.0 * 1024.0 * 1024.0))
+                    / ((tss[1] - tss[0]) as f64 / 1e9),
+                (tss[1] - tss[0]) as f64 / 1e3
+            );
+            println!("Calculate: {} us", (tss[2] - tss[1]) as f64 / 1e3);
+            println!(
+                "PCIe download bandwith: {} GB/s, dur: {} us",
+                (input_arr.inner.size() as f64 / (1024.0 * 1024.0 * 1024.0))
+                    / ((tss[3] - tss[2]) as f64 / 1e9),
+                (tss[3] - tss[2]) as f64 / 1e3
+            );
+            drop(ts);
+            ts_buffer.unmap();
+        }
+    }
+    dbg!(timer.elapsed());
+
+    // dbg!(&ans[0..10]);
+}
+
+#[cfg(test)]
+mod tests {
+    use num_complex::Complex32 as Complex;
+    #[tokio::test]
+    // 在main函数末尾添加以下测试代码
+    async fn test_fft() {
+        let instance = wgpu::Instance::default();
+
+        // `request_adapter` instantiates the general connection to the GPU
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        dbg!(adapter.limits());
+
+        // `request_device` instantiates the feature specific connection to the GPU, defining some parameters,
+        //  `features` being the available features.
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    required_features: adapter.features(),
+                    required_limits: adapter.limits(),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        let data = vec![Complex::new(1.0, 0.0); 16];
+        let len = data.len();
+
+        // let mut data_cpu = data
+        //     .iter()
+        //     .map(|c| rustfft::num_complex::Complex::new(c.re, 0.0))
+        //     .collect::<Vec<_>>();
+        // let fft = rustfft::FftPlanner::new().plan_fft_forward(16);
+        // fft.process(&mut data_cpu);
+        // fft.process(&mut data_cpu);
+        // println!("{:?}", &data_cpu[..]);
+
+        let mut ans = vec![Complex::ZERO; len];
+
+        // Instantiates buffer without data.
+        // `usage` of buffer specifies how it can be used:
+        //   `BufferUsages::MAP_READ` allows it to be read (outside the shader).
+        //   `BufferUsages::COPY_DST` allows it to be the destination of the copy.
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (len * std::mem::size_of::<Complex>()) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let src = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (len * std::mem::size_of::<Complex>()) as u64,
+            usage: wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        let fft_forward = fft_wgpu::Forward::new(&device, &queue, &src, 512);
+        // let fft_forward_2 = fft_wgpu::Forward::new(&device, &queue, &src, 16);
+
+        let timer = std::time::Instant::now();
+
+        for _ in 0..1000 {
+            queue.write_buffer(&src, 0, bytemuck::cast_slice(data.as_slice()));
+            // A command encoder executes one or many pipelines.
+            // It is to WebGPU what a command buffer is to Vulkan.
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+            // let _output = fft_forward.proc(&mut encoder);
+            // let  output= fft_forward.proc(&mut encoder);
+            // // let output = fft_forward.proc(&mut encoder);
+            // //let output = fft_forward_2.proc(&mut encoder);
+
+            // encoder.copy_buffer_to_buffer(
+            //     output,
+            //     0,
+            //     &staging_buffer,
+            //     0,
+            //     (len * std::mem::size_of::<Complex>()) as u64,
+            // );
+
+            queue.submit(Some(encoder.finish()));
+
+            // let rn = fft_forward.round_num.slice(..);
+
+            // rn.map_async(wgpu::MapMode::Read, move |_| {});
+
+            // device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+            // let a: Vec<u8> = rn.get_mapped_range().iter().copied().collect();
+            // dbg!(a);
+            // fft_forward.round_num.unmap();
+
+            // Note that we're not calling `.await` here.
+            // let buffer_slice = staging_buffer.slice(..);
+
+            // buffer_slice.map_async(wgpu::MapMode::Read, move |_| {});
+
+            device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+
+            // Gets contents of buffer
+            //     let data = buffer_slice.get_mapped_range();
+
+            //     // // Since contents are got in bytes, this converts these bytes back to u32
+            //    // bytemuck::cast_slice(&data).clone_into(&mut ans);
+            //     ans.copy_from_slice(bytemuck::cast_slice(&data));
+            //     println!("{:?}", &ans[..16]);
+
+            //     // With the current interface, we have to make sure all mapped views are
+            //     // dropped before we unmap the buffer.
+            //     drop(data);
+            //     staging_buffer.unmap(); // Unmaps buffer from memory
+            // If you are familiar with C++ these 2 lines can be thought of similarly to:
+            //   delete myPointer;
+            //   myPointer = NULL;
+            // It effectively frees the memory
+        }
+        //device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+        dbg!(timer.elapsed());
+    }
+}
