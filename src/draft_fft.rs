@@ -69,7 +69,9 @@ impl<'a> Processor<'a> {
     ) {
         let mut encoder = self
             .device
-            .create_command_encoder(&CommandEncoderDescriptor { label: None });
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("FFT Command Encoder"),
+            });
 
         if self.bind_group_cache.len() > 1024 {
             self.bind_group_cache.clear();
@@ -245,4 +247,152 @@ fn create_pipeline(
             cache: None,
         }),
     )
+}
+
+fn create_multiply_pipeline(device: &Device) -> Result<ComputePipeline, FftError> {
+    // 选择 WGSL 文件
+    let shader_source = include_str!("kernel/multiply.wgsl");
+
+    // 创建着色器模块
+    let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Multiply Shader"),
+        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(shader_source)),
+    });
+
+    // 创建绑定组布局
+    let bgl: wgpu::BindGroupLayout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Multiply Bind Group Layout"),
+        entries: &[
+            // 输入缓冲区 A
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,  // 可在计算阶段被访问
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // 输入缓冲区 B
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // 输出缓冲区
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    // 创建管道布局
+    let ppl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Multiply Pipeline Layout"),
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[],
+    });
+
+    // 创建计算管线
+    Ok(device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("Multiply Pipeline"),
+        layout: Some(&ppl),
+        module: &cs_module,
+        entry_point: Some("main"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        cache: None,
+    }))
+}
+
+pub struct MultiplyProcessor<'a> {
+    device: &'a Device,
+    queue: &'a Queue,
+    pipeline: ComputePipeline,
+    bind_group_cache: FastHashMap<[usize; 3], BindGroup>,
+}
+
+impl<'a> MultiplyProcessor<'a> {
+    pub fn new(device: &'a Device, queue: &'a Queue) -> Result<Self, FftError> {
+        let pipeline = create_multiply_pipeline(device)?;
+
+        Ok(Self {
+            device,
+            queue,
+            pipeline,
+            bind_group_cache: Default::default(),
+        })
+    }
+
+    pub fn proc(
+        &mut self,
+        input_a: &typed_buffer::Array<Complex<f32>>,
+        input_b: &typed_buffer::Array<Complex<f32>>,
+        output: &typed_buffer::Array<Complex<f32>>,
+    ) {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("Multiply Encoder"),
+            });
+
+        if self.bind_group_cache.len() > 1024 {
+            self.bind_group_cache.clear();
+        }
+
+        let bind_group: &BindGroup = self
+            .bind_group_cache
+            .entry([
+                input_a as *const _ as usize,
+                input_b as *const _ as usize,
+                output as *const _ as usize,
+            ])
+            .or_insert_with(|| {
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Multiply Bind Group"),
+                    layout: &self.pipeline.get_bind_group_layout(0),
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: input_a.inner.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: input_b.inner.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: output.inner.as_entire_binding(),
+                        },
+                    ],
+                })
+            });
+
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Multiply Compute Pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.pipeline);
+            cpass.set_bind_group(0, bind_group, &[]);
+
+            let workgroup_size = 64;
+            let num_workgroups = (input_a.size() as u32 + workgroup_size - 1) / workgroup_size;
+            cpass.dispatch_workgroups(num_workgroups, 1, 1);
+        }
+
+        self.queue.submit([encoder.finish()]);
+    }
 }
