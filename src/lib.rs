@@ -14,6 +14,7 @@ pub mod segmented_transfer;
 pub use segmented_transfer::SegmentedTransfer;
 
 pub mod draft_fft;
+pub mod draft_fft_f16;
 pub mod typed_buffer;
 
 #[repr(C)]
@@ -49,7 +50,7 @@ async fn prepare_gpu() -> Option<(Device, Queue)> {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
         })
-        .await?;
+        .await.unwrap();
 
     dbg!(adapter.limits());
 
@@ -62,7 +63,6 @@ async fn prepare_gpu() -> Option<(Device, Queue)> {
                 required_limits: adapter.limits(),
                 ..Default::default()
             },
-            None,
         )
         .await
         .ok()?;
@@ -238,7 +238,7 @@ pub async fn basic() {
 
         buffer_slice.map_async(wgpu::MapMode::Read, move |_| {});
 
-        device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+        device.poll(wgpu::PollType::wait_indefinitely());
 
         // Gets contents of buffer
         let data = buffer_slice.get_mapped_range();

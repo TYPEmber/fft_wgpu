@@ -7,6 +7,7 @@ var<storage, read> twiddles: array<vec2<f32>>;
 
 const PI: f32 = 3.14159265358979323846;
 const workgroup_len: u32 = 512u;
+// const workgroup_len: u32 = 64u;
 
 struct PushConstants { fft_len: u32, stage: u32 }
 var<push_constant> consts: PushConstants;

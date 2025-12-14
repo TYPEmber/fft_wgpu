@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wgpu = "24"
+wgpu = "27.0.1"
 ndarray = "*"
 ndarray-conv = "*"
 bytemuck = { version = "*", features = ["derive"] }
@@ -15,8 +15,8 @@ rustfft = "*"
 futures-intrusive = "0.5.0"
 rand = "0.9.1"
 approx = "0.5.1"
-wgpu-hal = "25.0.2"
 ash = "0.38.0"
+half = { version = "2.3", features = ["bytemuck", "num-traits"]}
 
 
 [[example]]
@@ -118,3 +118,7 @@ path = "src/examples/fftprocessor.rs"
 [[example]]
 name = "newprocessor"
 path = "src/examples/newprocessor.rs"
+
+[[example]]
+name = "draft_basic_f16"
+path = "src/examples/draft_basic_f16.rs"

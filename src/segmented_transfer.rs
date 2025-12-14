@@ -158,7 +158,7 @@ impl SegmentedTransfer {
                 self.upload_buffers[0]
                     .slice(..)
                     .map_async(wgpu::MapMode::Write, |r| r.unwrap());
-                while !self.device.poll(wgpu::MaintainBase::Poll).is_queue_empty() {}
+                while !self.device.poll(wgpu::PollType::Poll).unwrap().is_queue_empty() {}
 
                 // 写入数据并提交命令
                 {
@@ -194,7 +194,7 @@ impl SegmentedTransfer {
                         let _ = tx.send(result);
                     });
 
-                self.device.poll(wgpu::MaintainBase::Poll);
+                self.device.poll(wgpu::PollType::Poll);
                 let mut encoder =
                 self.device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -278,7 +278,7 @@ impl SegmentedTransfer {
                     let _=tx.send(r);
                 });
 
-            while !self.device.poll(wgpu::MaintainBase::Poll).is_queue_empty() {}
+            while !self.device.poll(wgpu::PollType::Poll).unwrap().is_queue_empty() {}
             if i < self.download_segments - 1 {
                 let next_gpu_offset = gpu_offset + self.download_sizes[i];
                 let mut encoder =
