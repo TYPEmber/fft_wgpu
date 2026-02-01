@@ -29,7 +29,7 @@ pub struct Config {
 }
 
 pub struct Processor<'a> {
-    config: Config,
+    pub config: Config,
     twiddles: typed_buffer::Array<Complex<f16>>,
     device: &'a Device,
     queue: &'a Queue,
@@ -63,17 +63,12 @@ impl<'a> Processor<'a> {
         })
     }
 
-    pub fn proc(
+    pub fn record(
         &mut self,
+        encoder: &mut wgpu::CommandEncoder,
         input: &typed_buffer::Array<Complex<f16>>,
         output: &typed_buffer::Array<Complex<f16>>,
     ) {
-        let mut encoder = self
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("FFT Command Encoder"),
-            });
-
         if self.bind_group_cache.len() > 1024 {
             self.bind_group_cache.clear();
         }
@@ -135,6 +130,20 @@ impl<'a> Processor<'a> {
                 cpass.dispatch_workgroups(workgroup_count_per_fft, batch_count, 1);
             }
         }
+    }
+
+    pub fn proc(
+        &mut self,
+        input: &typed_buffer::Array<Complex<f16>>,
+        output: &typed_buffer::Array<Complex<f16>>,
+    ) {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("FFT Command Encoder"),
+            });
+
+        self.record(&mut encoder, input, output);
 
         self.queue.submit([encoder.finish()]);
     }
