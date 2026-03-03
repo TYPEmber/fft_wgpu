@@ -396,3 +396,177 @@ impl<'a> MultiplyProcessor<'a> {
         self.queue.submit([encoder.finish()]);
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use wgpu::util::DeviceExt;
+    use num_complex::Complex;
+    use wgpu::{ExperimentalFeatures, hal::MemoryRange};
+    use crate::typed_buffer;
+    use super::{Processor, Config, Recipe, Direction};
+
+   #[tokio::test]
+    async fn test_f32_batch_truncation_bug_with_print() {
+        println!("\n🚀 Starting FFT Batch Truncation Test (f32)...\n");
+
+        // 1. 初始化 GPU 环境
+        let instance = wgpu::Instance::default();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                ..Default::default()
+            })
+            .await
+            .expect("Failed to find adapter");
+
+        let mut required_features = adapter.features();
+        // 如果你的 f32 shader 需要某些特性，可以在这里加，通常 f32 是核心功能不需要额外 feature
+        
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features,
+                required_limits: adapter.limits(),
+                experimental_features: unsafe { ExperimentalFeatures::enabled() },
+                label: Some("GPU Device"),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        // 2. 准备测试参数
+        let fft_len = 16u32; // FFT 点数
+        let num_batches = 2; // Batch 数量 (测试多 Batch 能力)
+        let total_elements = (fft_len * num_batches) as usize;
+
+        // 3. 准备输入数据 (f32)
+        // 构造简单的直流信号：
+        // Batch 0: 全是 1.0 (Sum = 16.0)
+        // Batch 1: 全是 2.0 (Sum = 32.0)
+        let mut input_data = Vec::with_capacity(total_elements);
+        for i in 0..total_elements {
+            let val = if i < fft_len as usize { 1.0 } else { 2.0 };
+            input_data.push(Complex::new(val, 0.0f32)); // 显式 f32
+        }
+
+        // === 打印输入数据 ===
+        println!("📝 --- Input Data (Before FFT) ---");
+        for b in 0..num_batches {
+            let start = (b * fft_len) as usize;
+            let end = start + fft_len as usize;
+            println!("Batch {}: {:?}", b, &input_data[start..end]);
+        }
+        println!("----------------------------------\n");
+
+        let input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Input Buffer"),
+            contents: bytemuck::cast_slice(&input_data),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        
+        let input_arr = typed_buffer::Array::new(input_buffer);
+
+        // 4. 准备输出数据
+        let output_size = (total_elements * std::mem::size_of::<Complex<f32>>()) as u64;
+        let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Output Buffer"),
+            size: output_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let output_arr = typed_buffer::Array::new(output_buffer);
+
+        // 5. 创建 FFT Processor (f32)
+        let config = Config {
+            fft_len,
+            recipe: Recipe::Radix2,
+            direction: Direction::Forward,
+        };
+        // 注意：这里假设 Processor::new 内部使用的是 f32 的 shader
+        let mut processor = Processor::new(&device, &queue, config).unwrap();
+
+        // 6. 执行 FFT
+        println!("⚙️  Running FFT on GPU...");
+        processor.proc(&input_arr, &output_arr);
+
+        // 7. 读取结果
+        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Readback Buffer"),
+            size: output_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(&output_arr.inner, 0, &readback_buffer, 0, output_size);
+        queue.submit(Some(encoder.finish()));
+
+        let slice = readback_buffer.slice(..);
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+        
+        // 等待 GPU 完成
+        // device.poll(wgpu::PollType::Wait).unwrap();
+        while !device.poll(wgpu::PollType::Poll).unwrap().is_queue_empty() {}
+        receiver.await.unwrap().unwrap();
+
+        let data = slice.get_mapped_range();
+        let result: &[Complex<f32>] = bytemuck::cast_slice(&data);
+
+        // === 打印输出数据 ===
+        println!("\n📊 --- Output Data (After FFT) ---");
+        for b in 0..num_batches as usize {
+            let start = b * fft_len as usize;
+            let end = start + fft_len as usize;
+            println!("Batch {}:", b);
+            // 为了显示整洁，只打印前几个和非零值，或者打印全部但紧凑些
+            let batch_slice = &result[start..end];
+            
+            // 打印直流分量 (DC - Index 0)
+            println!("  - DC Component (Index 0): re={:.4}, im={:.4}", batch_slice[0].re, batch_slice[0].im);
+            
+            // 打印全部数据（可选，如果太长可以注释掉）
+            print!("  - All Data: [");
+            for (i, val) in batch_slice.iter().enumerate() {
+                if i > 0 { print!(", "); }
+                // 简单的复数格式化
+                print!("{:.1}+{:.1}i", val.re, val.im);
+            }
+            println!("]");
+        }
+        println!("----------------------------------\n");
+
+        // 8. 验证逻辑
+        println!("🔍 Verifying Results...");
+        
+        // 验证 Batch 0
+        let b0_dc = result[0].re;
+        let expected_b0 = 16.0;
+        let b0_ok = (b0_dc - expected_b0).abs() < 0.1;
+        
+        if b0_ok {
+            println!("✅ Batch 0 DC: {:.4} (Expected {:.4}) - PASS", b0_dc, expected_b0);
+        } else {
+            println!("❌ Batch 0 DC: {:.4} (Expected {:.4}) - FAIL", b0_dc, expected_b0);
+        }
+
+        // 验证 Batch 1 (Bug 核心)
+        let b1_idx = fft_len as usize;
+        let b1_dc = result[b1_idx].re;
+        let expected_b1 = 32.0; // sum(2.0 * 16)
+        
+        // 特别检查是否为 0
+        if b1_dc.abs() < 0.001 {
+            println!("\n🚨 BUG DETECTED: Batch 1 DC is ZERO! (Expected {:.4})", expected_b1);
+            println!("   -> The shader processed Batch 0 correctly but IGNORED Batch 1.");
+            println!("   -> This confirms the 'Half-Truncation' bug in f32 shader logic.");
+            panic!("Test Failed: Batch 1 Truncation Detected");
+        } else if (b1_dc - expected_b1).abs() < 0.1 {
+            println!("✅ Batch 1 DC: {:.4} (Expected {:.4}) - PASS", b1_dc, expected_b1);
+            println!("\n🎉 SUCCESS: The f32 shader handles multiple batches correctly!");
+        } else {
+            println!("❓ Batch 1 DC: {:.4} (Expected {:.4}) - WRONG VALUE", b1_dc, expected_b1);
+            panic!("Test Failed: Calculation Error");
+        }
+    }
+}

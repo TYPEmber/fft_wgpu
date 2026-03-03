@@ -20,9 +20,16 @@ fn main(@builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(num_workgroups)
      if index >= arrayLength(&buffer_a) / 2u {
         return;
     }
-    let batch_idx = index / fft_len;
-    let batch_offset = batch_idx * fft_len;
-    let local_idx = index % (fft_len / 2u);
+    // let batch_idx = index / fft_len;
+    // let batch_offset = batch_idx * fft_len;
+    // let local_idx = index % (fft_len / 2u);
+
+    // 修正 batch_idx 计算
+    let butterfly_len = fft_len / 2u; // 8
+    let batch_idx = index / butterfly_len; // index / 8
+    let batch_offset = batch_idx * fft_len; // batch_idx * 16
+    let local_idx = index % butterfly_len; // index % 8
+
     if (stage == 0u) {
          //阶段0：结合位反转和第一阶段蝶形运算
         // 每个线程处理一对元素 - 需要 fft_len/2 个线程
